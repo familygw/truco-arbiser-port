@@ -1,5 +1,10 @@
 # Ingeniería inversa de Truco Arbiser
 
+Investigación y adaptación para el port web por **Carlos A. Leguizamón**, sobre
+el juego original de **Ariel Arbiser y Enrique Arbiser**. El alcance de la
+licencia y los recursos originales se detalla en
+[`THIRD_PARTY_NOTICE.md`](./THIRD_PARTY_NOTICE.md).
+
 ## Ejecutable desempaquetado
 
 `TRUCO.EXE` no contiene directamente toda la imagen ejecutable: fue comprimido

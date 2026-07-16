@@ -1,8 +1,27 @@
 {
   "name": "truco-arbiser-web",
   "version": "0.1.0",
+  "description": "Port web de preservación del Truco Arbiser para DOS, con recursos recuperados y lógica reimplementada.",
+  "author": "Carlos A. Leguizamón",
+  "contributors": [
+    "Ariel Arbiser (juego original)",
+    "Enrique Arbiser (juego original)"
+  ],
+  "license": "MIT",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  },
+  "keywords": [
+    "truco",
+    "baraja-espanola",
+    "dos",
+    "preservacion",
+    "vite",
+    "react",
+    "typescript"
+  ],
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",

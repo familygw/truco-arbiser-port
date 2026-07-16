@@ -724,7 +724,7 @@ export default function App() {
           </div>
           {introBlocked ? <button className="sound-unlock" onClick={() => void activateSplashAudio()}>▶ ACTIVAR SONIDO DEL SPLASH</button> : null}
           <button className="primary-button" onClick={startGame}>JUGAR PARTIDA <span>↗</span></button>
-          <small>Por Ariel Arbiser y Enrique Arbiser · Port experimental</small>
+          <small>Juego original por Ariel y Enrique Arbiser · Port web por Carlos A. Leguizamón</small>
         </div>
       </main>
     );
