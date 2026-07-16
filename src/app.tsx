@@ -1,25 +1,32 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { playMusic, playVoice, stopMusic } from "./audio";
 import { acceptedEnvidoPoints, allowedEnvidoRaises, describeEnvido, envidoLabel, rejectedEnvidoPoints, type EnvidoCall } from "./bids";
 import { Card, envidoPoints, florPoints, hasFlor, pickCpuCard, shuffledDeck, splitScore, suitLabel, trucoStrength } from "./game";
+import {
+  classifyOriginalLanguage,
+  expandOriginalPhrase,
+  ORIGINAL_ABANDON_REPLY,
+  ORIGINAL_CREDITS_REPLY,
+  ORIGINAL_DIMINUTIVE_REPLY,
+  ORIGINAL_DIRTY_REPLIES,
+  ORIGINAL_EXIT_TOKENS,
+  ORIGINAL_INSULT_STEMS,
+  ORIGINAL_SEXUAL_REPLY,
+  ORIGINAL_TRUQUE_REPLIES,
+  parseOriginalCommand,
+  randomOriginalReply,
+  type OriginalCommand,
+} from "./original-parser";
 
 type Side = "player" | "cpu";
 type Phase = "playing" | "hand-over" | "match-over";
 type Dialogue = { record: number; voice: string; text: string };
+type TablePlay = { leader: Side; player?: Card; cpu?: Card };
 type PendingCall =
   | { kind: "envido"; sequence: EnvidoCall[]; deferredTruco?: 2 | 3 | 4 }
   | { kind: "truco"; nextStake: 2 | 3 | 4 }
   | { kind: "flor"; mode: "flor" | "contraflor" | "resto"; deferredTruco?: 2 | 3 | 4 };
 
-const INSULT_STEMS = ["put", "mierd", "pij", "conch", "bolud", "pelotu", "caraj", "chot", "fuck", "garch"];
-const DIRTY_REPLIES = [
-  "Shh… @$?%!~@^ Eso no se dice!",
-  "¡Mal educado!",
-  "¡Boca sucia!",
-  "¿Quién te educó?",
-  "¡Qué léxico!",
-  "¡Léxico'e merda!",
-];
 const CPU_TAUNTS = [
   "¿Sos humano o androide? ¿Cuántos Kbytes tiene tu marote?",
   "No te la vas a llevar de arriba.",
@@ -39,22 +46,35 @@ function pendingCallLabel(call: PendingCall): string {
   return call.nextStake === 2 ? "TRUCO" : call.nextStake === 3 ? "RETRUCO" : "VALE 4";
 }
 
-function decideHand(results: number[]): number | null {
+function decideHand(results: number[], mano: Side): number | null {
   const [a, b, c] = results;
   if (results.length >= 2) {
     if (a === b && a !== 0) return a;
     if (a === 0 && b !== 0) return b;
     if (a !== 0 && b === 0) return a;
   }
-  if (results.length === 3) return c || a || 1;
+  if (results.length === 3) return c || a || (mano === "player" ? 1 : -1);
   return null;
+}
+
+function cpuBluffChance(points: number): number {
+  if (points >= 30) return 0.78;
+  if (points >= 26) return 0.58;
+  if (points >= 22) return 0.38;
+  return 0.16;
+}
+
+function cpuTrucoChance(cards: Card[], tricks: number[]): number {
+  const strength = cards.reduce((total, card) => total + trucoStrength(card), 0) / Math.max(1, cards.length);
+  const behind = tricks.filter((result) => result > 0).length > tricks.filter((result) => result < 0).length;
+  return Math.min(0.82, 0.12 + strength / 24 + (behind ? 0.1 : 0));
 }
 
 function PlayingCard({ card, onPlay, disabled = false, compact = false }: { card: Card; onPlay?: () => void; disabled?: boolean; compact?: boolean }) {
   const content = (
     <>
       <span className="card-rank">{card.rank}</span>
-      <img src={`/original/carta-${card.suit}.png`} alt={`${card.rank} de ${suitLabel[card.suit]}`} />
+      <img src={`/restored/carta-${card.suit}-fullcolor.png`} alt={`${card.rank} de ${suitLabel[card.suit]}`} />
       <span className="card-suit">{suitLabel[card.suit]}</span>
     </>
   );
@@ -85,10 +105,13 @@ export default function App() {
   const [started, setStarted] = useState(false);
   const [view, setView] = useState<"game" | "archive">("game");
   const [playerCards, setPlayerCards] = useState(initial.player);
+  const [playerCardOrder, setPlayerCardOrder] = useState(initial.player.map((card) => card.id));
   const [cpuCards, setCpuCards] = useState(initial.cpu);
-  const [table, setTable] = useState<Array<{ player: Card; cpu: Card }>>([]);
+  const [table, setTable] = useState<TablePlay[]>([]);
   const [tricks, setTricks] = useState<number[]>([]);
   const [score, setScore] = useState({ player: 0, cpu: 0 });
+  const [handPoints, setHandPoints] = useState({ player: 0, cpu: 0 });
+  const handPointsRef = useRef({ player: 0, cpu: 0 });
   const [stake, setStake] = useState(1);
   const [trucoCaller, setTrucoCaller] = useState<Side | null>(null);
   const [envidoDone, setEnvidoDone] = useState(false);
@@ -102,6 +125,9 @@ export default function App() {
   const [dialogues, setDialogues] = useState<Dialogue[]>([]);
   const [pendingCall, setPendingCall] = useState<PendingCall | null>(null);
   const [openingChecked, setOpeningChecked] = useState(false);
+  const [mano, setMano] = useState<Side>("player");
+  const [turn, setTurn] = useState<Side>("player");
+  const [cpuDecisionMade, setCpuDecisionMade] = useState(false);
   // Visible until autoplay is positively confirmed. Some browsers leave
   // AudioContext.resume() pending instead of rejecting it.
   const [introBlocked, setIntroBlocked] = useState(true);
@@ -131,54 +157,58 @@ export default function App() {
   }, [started]);
 
   const matchWinner = score.player >= 30 ? "Vos" : score.cpu >= 30 ? "La CPU" : null;
-  const canFlor = hasFlor(playerCards) && !envidoDone && tricks.length === 0;
+  const fullPlayerHand = useMemo(() => [...playerCards, ...table.flatMap((play) => play.player ? [play.player] : [])], [playerCards, table]);
+  const fullCpuHand = useMemo(() => [...cpuCards, ...table.flatMap((play) => play.cpu ? [play.cpu] : [])], [cpuCards, table]);
+  const canFlor = hasFlor(fullPlayerHand) && !envidoDone && tricks.length === 0;
   const trucoLabel = stake === 1 ? "Truco" : stake === 2 ? "Retruco" : stake === 3 ? "Vale 4" : "Cantado";
 
   useEffect(() => {
-    if (!started || phase !== "playing" || openingChecked || tricks.length > 0 || pendingCall) return;
-    const timer = window.setTimeout(() => {
-      setOpeningChecked(true);
-      const cpuEnvido = envidoPoints(cpuCards);
-      const cpuBestCard = Math.max(...cpuCards.map(trucoStrength));
-      if (!envidoDone && hasFlor(cpuCards)) {
-        setEnvidoDone(true);
-        void playMusic("flor", sound);
-        if (hasFlor(playerCards)) {
-          setPendingCall({ kind: "flor", mode: "flor" });
-          say("¡Flor! Vos también tenés: con flor quiero, contraflor o te achicás.", 49);
-        } else {
-          addPoints("cpu", 3);
-          say("¡Flor! Tres puntos para la CPU.", 49);
-        }
-      } else if (!envidoDone && cpuEnvido >= 25 && Math.random() < 0.68) {
-        const openingCall: EnvidoCall = cpuEnvido >= 32 && Math.random() < 0.32 ? "falta-envido" : cpuEnvido >= 29 && Math.random() < 0.4 ? "real-envido" : "envido";
-        setPendingCall({ kind: "envido", sequence: [openingCall] });
-        say(`¡${envidoLabel[openingCall]}! Te toca contestar a vos.`, openingCall === "falta-envido" ? 37 : openingCall === "real-envido" ? 13 : 1);
-        void playMusic(openingCall === "real-envido" ? "real" : "envido", sound);
-      } else if (stake < 4 && trucoCaller !== "cpu" && cpuBestCard >= 12 && Math.random() < 0.48) {
-        cpuCallsTruco((stake + 1) as 2 | 3 | 4);
-      }
-    }, 650);
+    if (!started || phase !== "playing" || openingChecked) return;
+    const timer = window.setTimeout(() => setOpeningChecked(true), 500);
     return () => window.clearTimeout(timer);
-  }, [started, phase, openingChecked, tricks.length, pendingCall, cpuCards, playerCards, envidoDone, stake, trucoCaller, sound]);
+  }, [started, phase, openingChecked]);
+
+  useEffect(() => {
+    if (!started || !openingChecked || phase !== "playing" || turn !== "cpu" || pendingCall || cpuCards.length === 0) return;
+    const timer = window.setTimeout(() => cpuTakeTurn(), 620);
+    return () => window.clearTimeout(timer);
+  }, [started, openingChecked, phase, turn, pendingCall, cpuDecisionMade, cpuCards, playerCards, table, tricks, envidoDone, stake, trucoCaller, sound]);
+
+  useEffect(() => {
+    if (!started || !openingChecked || phase !== "playing" || turn !== "player" || pendingCall || tricks.length !== 2 || playerCards.length !== 1) return;
+    const timer = window.setTimeout(() => playCard(playerCards[0]), 360);
+    return () => window.clearTimeout(timer);
+  }, [started, openingChecked, phase, turn, pendingCall, tricks.length, playerCards]);
 
   function say(text: string, voiceIndex?: number) {
     setSpeech(text);
     if (voiceIndex) void playVoice(voiceIndex, voice);
   }
 
-  function addPoints(side: Side, points: number) {
-    setScore((current) => {
-      const next = { ...current, [side]: current[side] + points };
-      if (next[side] >= 30) setPhase("match-over");
-      return next;
-    });
+  function sayOriginalRange(from: number, to: number, fallback: string) {
+    const options = dialogues.filter((dialogue) => dialogue.record >= from && dialogue.record <= to);
+    const chosen = options[Math.floor(Math.random() * options.length)];
+    say(chosen?.text ?? fallback, chosen?.record ?? from);
+  }
+
+  function bankPoints(side: Side, points: number) {
+    const next = { ...handPointsRef.current, [side]: handPointsRef.current[side] + points };
+    handPointsRef.current = next;
+    setHandPoints(next);
   }
 
   function finishHand(side: Side, points: number, message: string) {
-    addPoints(side, points);
+    const gainedPlayer = handPointsRef.current.player + (side === "player" ? points : 0);
+    const gainedCpu = handPointsRef.current.cpu + (side === "cpu" ? points : 0);
+    setScore((current) => {
+      const next = {
+        player: current.player + gainedPlayer,
+        cpu: current.cpu + gainedCpu,
+      };
+      return next;
+    });
     setLastWinner(side);
-    setPhase("hand-over");
+    setPhase(score.player + gainedPlayer >= 30 || score.cpu + gainedCpu >= 30 ? "match-over" : "hand-over");
     say(message, side === "cpu" ? 145 : undefined);
     void playMusic(side === "player" ? "handWin" : "handLose", sound);
   }
@@ -186,27 +216,97 @@ export default function App() {
   function cpuCallsTruco(nextStake: 2 | 3 | 4) {
     setPendingCall({ kind: "truco", nextStake });
     const label = nextStake === 2 ? "¡Truco!" : nextStake === 3 ? "¡Retruco!" : "¡Vale cuatro!";
-    say(`${label} La CPU cantó; ahora contestás vos.`, nextStake === 3 ? 98 : nextStake === 4 ? 109 : 86);
+    const [from, to] = nextStake === 2 ? [85, 96] : nextStake === 3 ? [97, 108] : [109, 120];
+    sayOriginalRange(from, to, `${label} La CPU cantó; ahora contestás vos.`);
     void playMusic(nextStake === 2 ? "truco" : nextStake === 3 ? "retruco" : "vale4", sound);
   }
 
-  function playCard(card: Card) {
-    if (phase !== "playing" || pendingCall) return;
-    const cpuCard = pickCpuCard(cpuCards, card, tricks);
-    setPlayerCards((cards) => cards.filter((item) => item.id !== card.id));
-    setCpuCards((cards) => cards.filter((item) => item.id !== cpuCard.id));
-    setTable((plays) => [...plays, { player: card, cpu: cpuCard }]);
-    const result = Math.sign(trucoStrength(card) - trucoStrength(cpuCard));
+  function giveTurn(side: Side) {
+    setTurn(side);
+    if (side === "cpu") setCpuDecisionMade(false);
+  }
+
+  function resolveCompletedTrick(playerCard: Card, cpuCard: Card, leader: Side, effectiveStake = stake) {
+    const result = Math.sign(trucoStrength(playerCard) - trucoStrength(cpuCard));
     const nextTricks = [...tricks, result];
     setTricks(nextTricks);
-    const handResult = decideHand(nextTricks);
+    const handResult = decideHand(nextTricks, mano);
     if (handResult) {
-      finishHand(handResult > 0 ? "player" : "cpu", stake, handResult > 0 ? "Ganaste la mano. No te engrupas…" : "¡Dormiste afuera! ¿Querés una frazada?");
-    } else if (stake < 4 && trucoCaller !== "cpu" && Math.max(...cpuCards.filter((item) => item.id !== cpuCard.id).map(trucoStrength)) >= 10 && Math.random() < 0.34) {
-      cpuCallsTruco((stake + 1) as 2 | 3 | 4);
-    } else if (result > 0) say("Esta baza es tuya. Todavía no terminó.");
+      finishHand(handResult > 0 ? "player" : "cpu", effectiveStake, handResult > 0 ? "Ganaste la mano. No te engrupas…" : "¡Dormiste afuera! ¿Querés una frazada?");
+      return;
+    }
+    const nextLeader: Side = result > 0 ? "player" : result < 0 ? "cpu" : leader;
+    giveTurn(nextLeader);
+    if (result > 0) say("Esta baza es tuya. Todavía no terminó.");
     else if (result < 0) say(CPU_TAUNTS[Math.floor(Math.random() * CPU_TAUNTS.length)]);
-    else say("Parda. La primera manda.");
+    else say("Parda. La ventaja sigue con quien salió.");
+  }
+
+  function cpuTakeTurn() {
+    if (phase !== "playing" || turn !== "cpu" || pendingCall || cpuCards.length === 0) return;
+    if (!cpuDecisionMade) {
+      setCpuDecisionMade(true);
+      const cpuEnvido = envidoPoints(fullCpuHand);
+      if (!envidoDone && tricks.length === 0 && hasFlor(fullCpuHand)) {
+        setEnvidoDone(true);
+        void playMusic("flor", sound);
+        if (hasFlor(fullPlayerHand)) {
+          setPendingCall({ kind: "flor", mode: "flor" });
+          say("¡Flor! Vos también tenés: con flor quiero, contraflor o te achicás.", 49);
+        } else {
+          bankPoints("cpu", 3);
+          say("¡Flor! Los tres puntos quedan anotados para el cierre de la mano.", 49);
+        }
+        return;
+      }
+      if (!envidoDone && tricks.length === 0 && Math.random() < cpuBluffChance(cpuEnvido)) {
+        const risk = Math.random();
+        const openingCall: EnvidoCall = risk < 0.08 ? "falta-envido" : risk < 0.31 ? "real-envido" : "envido";
+        setPendingCall({ kind: "envido", sequence: [openingCall] });
+        const [from, to] = openingCall === "falta-envido" ? [37, 48] : openingCall === "real-envido" ? [13, 24] : [1, 12];
+        sayOriginalRange(from, to, `¡${envidoLabel[openingCall]}! Puede ser carta… o puede ser picardía.`);
+        void playMusic(openingCall === "real-envido" ? "real" : "envido", sound);
+        return;
+      }
+      if (stake < 4 && trucoCaller !== "cpu" && Math.random() < cpuTrucoChance(cpuCards, tricks)) {
+        cpuCallsTruco((stake + 1) as 2 | 3 | 4);
+        return;
+      }
+    }
+
+    const index = tricks.length;
+    const current = table[index];
+    const cpuCard = current?.player
+      ? pickCpuCard(cpuCards, current.player, tricks)
+      : [...cpuCards].sort((a, b) => trucoStrength(a) - trucoStrength(b))[Math.random() < 0.24 ? cpuCards.length - 1 : 0];
+    setCpuCards((cards) => cards.filter((item) => item.id !== cpuCard.id));
+    const play: TablePlay = current
+      ? { ...current, cpu: cpuCard }
+      : { leader: "cpu", cpu: cpuCard };
+    setTable((plays) => {
+      const next = [...plays];
+      next[index] = play;
+      return next;
+    });
+    if (play.player) resolveCompletedTrick(play.player, cpuCard, play.leader);
+    else giveTurn("player");
+  }
+
+  function playCard(card: Card, effectiveStake = stake, resolvedPendingCall = false) {
+    if (phase !== "playing" || turn !== "player" || (pendingCall && !resolvedPendingCall)) return;
+    const index = tricks.length;
+    const current = table[index];
+    setPlayerCards((cards) => cards.filter((item) => item.id !== card.id));
+    const play: TablePlay = current
+      ? { ...current, player: card }
+      : { leader: "player", player: card };
+    setTable((plays) => {
+      const next = [...plays];
+      next[index] = play;
+      return next;
+    });
+    if (play.cpu) resolveCompletedTrick(card, play.cpu, play.leader, effectiveStake);
+    else giveTurn("cpu");
   }
 
   function restoreDeferredTruco(deferredTruco?: 2 | 3 | 4) {
@@ -215,49 +315,56 @@ export default function App() {
   }
 
   function resolveAcceptedEnvido(sequence: EnvidoCall[], deferredTruco?: 2 | 3 | 4) {
-    const yours = envidoPoints(playerCards);
-    const theirs = envidoPoints(cpuCards);
+    const yours = envidoPoints(fullPlayerHand);
+    const theirs = envidoPoints(fullCpuHand);
     const side: Side = yours >= theirs ? "player" : "cpu";
     const points = acceptedEnvidoPoints(sequence, score.player, score.cpu);
     setEnvidoDone(true);
-    addPoints(side, points);
+    bankPoints(side, points);
     restoreDeferredTruco(deferredTruco);
     say(`${describeEnvido(sequence)} querido: ${yours} contra ${theirs}. ${points} para ${side === "player" ? "vos" : "la CPU"}.`, 13);
     void playMusic(side === "player" ? "win" : "lose", sound);
   }
 
   function cpuRespondsToEnvido(sequence: EnvidoCall[], deferredTruco?: 2 | 3 | 4) {
-    const cpuHasFlor = hasFlor(cpuCards);
+    const cpuHasFlor = hasFlor(fullCpuHand);
     if (cpuHasFlor) {
       setEnvidoDone(true);
       void playMusic("flor", sound);
-      if (hasFlor(playerCards)) {
+      if (hasFlor(fullPlayerHand)) {
         setPendingCall({ kind: "flor", mode: "flor", deferredTruco });
         say("El Envido no corre: tengo Flor. ¿Con flor querés o te achicás?", 49);
       } else {
-        addPoints("cpu", 3);
+        bankPoints("cpu", 3);
         restoreDeferredTruco(deferredTruco);
         say("El Envido no corre porque tengo Flor. Tres para la CPU.", 49);
       }
       return;
     }
 
-    const cpuPoints = envidoPoints(cpuCards);
+    const cpuPoints = envidoPoints(fullCpuHand);
     const raises = allowedEnvidoRaises(sequence);
-    if (cpuPoints < 22 && Math.random() > 0.28) {
+    const courage = cpuBluffChance(cpuPoints);
+    if (Math.random() > courage) {
       const points = rejectedEnvidoPoints(sequence, score.player, score.cpu);
       setEnvidoDone(true);
-      addPoints("player", points);
+      bankPoints("player", points);
       restoreDeferredTruco(deferredTruco);
       say(`No quiero ${describeEnvido(sequence)}. ${points} para vos.`);
       void playMusic("noQuiero", sound);
       return;
     }
-    if (raises.length && cpuPoints >= 29 && Math.random() < 0.58) {
-      const raise = raises.includes("falta-envido") && cpuPoints >= 31 ? "falta-envido" : raises.includes("real-envido") ? "real-envido" : raises[0];
+    if (raises.length && Math.random() < Math.min(0.66, 0.12 + courage * 0.58)) {
+      const raise = raises.includes("falta-envido") && Math.random() < (cpuPoints >= 29 ? 0.34 : 0.1)
+        ? "falta-envido"
+        : raises.includes("real-envido")
+          ? "real-envido"
+          : raises[0];
       const raisedSequence = [...sequence, raise];
       setPendingCall({ kind: "envido", sequence: raisedSequence, deferredTruco });
-      say(`La CPU responde ${envidoLabel[raise]}. Ahora decidís vos.`, raise === "falta-envido" ? 37 : 13);
+      const isSecondReal = raisedSequence.filter((call) => call === "real-envido").length === 2;
+      const [from, to] = raise === "falta-envido" ? [37, 48] : isSecondReal ? [25, 36] : [13, 24];
+      sayOriginalRange(from, to, `La CPU responde ${describeEnvido(raisedSequence)}. Ahora decidís vos.`);
       void playMusic(raise === "real-envido" ? "real" : "envidoReply", sound);
       return;
     }
@@ -265,7 +372,7 @@ export default function App() {
   }
 
   function callEnvido(call: EnvidoCall = "envido", deferredTruco?: 2 | 3 | 4) {
-    if (envidoDone || tricks.length > 0 || phase !== "playing") return;
+    if ((turn !== "player" && deferredTruco === undefined) || envidoDone || tricks.length > 0 || phase !== "playing") return;
     if (pendingCall && pendingCall.kind !== "truco") return;
     const sequence = [call];
     setPendingCall(null);
@@ -285,30 +392,30 @@ export default function App() {
   }
 
   function resolveFlor(mode: "flor" | "contraflor" | "resto", deferredTruco?: 2 | 3 | 4) {
-    const yours = florPoints(playerCards);
-    const theirs = florPoints(cpuCards);
+    const yours = florPoints(fullPlayerHand);
+    const theirs = florPoints(fullCpuHand);
     const side: Side = yours >= theirs ? "player" : "cpu";
     const points = mode === "flor" ? 4 : mode === "contraflor" ? 6 : acceptedEnvidoPoints(["falta-envido"], score.player, score.cpu);
     restoreDeferredTruco(deferredTruco);
     setEnvidoDone(true);
-    addPoints(side, points);
+    bankPoints(side, points);
     say(`${yours} de Flor contra ${theirs}. ${points} para ${side === "player" ? "vos" : "la CPU"}.`, side === "player" ? 61 : 121);
     void playMusic(side === "player" ? "florReply" : "lose", sound);
   }
 
   function raisePendingFlor(mode: "contraflor" | "resto") {
     if (!pendingCall || pendingCall.kind !== "flor") return;
-    const cpuFlor = florPoints(cpuCards);
+    const cpuFlor = florPoints(fullCpuHand);
     const deferredTruco = pendingCall.deferredTruco;
     setPendingCall(null);
     void playMusic("florReply", sound);
-    if (cpuFlor < 28 && Math.random() > 0.3) {
-      addPoints("player", 4);
+    if (Math.random() > Math.min(0.82, 0.18 + cpuFlor / 48)) {
+      bankPoints("player", 4);
       restoreDeferredTruco(deferredTruco);
       say(`Con Flor me achico. Cuatro para vos.`, 73);
       return;
     }
-    if (mode === "contraflor" && cpuFlor >= 32 && Math.random() < 0.55) {
+    if (mode === "contraflor" && Math.random() < Math.min(0.62, 0.08 + cpuFlor / 70)) {
       setPendingCall({ kind: "flor", mode: "resto", deferredTruco });
       say("¡Contraflor al resto! Te toca responder.", 121);
       return;
@@ -317,17 +424,17 @@ export default function App() {
   }
 
   function callFlor() {
-    if (!canFlor || phase !== "playing" || pendingCall) return;
+    if (turn !== "player" || !canFlor || phase !== "playing" || pendingCall) return;
     setEnvidoDone(true);
     void playMusic("flor", sound);
-    if (!hasFlor(cpuCards)) {
-      addPoints("player", 3);
+    if (!hasFlor(fullCpuHand)) {
+      bankPoints("player", 3);
       say("Flor. Tres puntos para vos.", 49);
       return;
     }
-    const cpuFlor = florPoints(cpuCards);
+    const cpuFlor = florPoints(fullCpuHand);
     if (cpuFlor < 27 && Math.random() > 0.35) {
-      addPoints("player", 3);
+      bankPoints("player", 3);
       say("Con Flor me achico. Tres para vos.", 73);
     } else if (cpuFlor >= 32 && Math.random() < 0.5) {
       setPendingCall({ kind: "flor", mode: "resto" });
@@ -337,27 +444,34 @@ export default function App() {
     }
   }
 
-  function offerTrucoToCpu() {
-    if (stake >= 4 || trucoCaller === "player") return;
+  function offerTrucoToCpu(): number | null {
+    if (stake >= 4 || trucoCaller === "player") return null;
     void playMusic(stake === 1 ? "truco" : stake === 2 ? "retruco" : "vale4", sound);
-    const best = Math.max(...cpuCards.map(trucoStrength));
-    if (best < 7 && Math.random() > 0.35) {
+    const courage = cpuTrucoChance(cpuCards, tricks);
+    if (Math.random() > courage) {
       finishHand("player", stake, "No quiero. Soldado que huye sirve pa' otra guerra.");
-      return;
+      return null;
     }
-    const next = stake + 1;
+    const next = stake + 1 as 2 | 3 | 4;
     setStake(next);
     setTrucoCaller("player");
-    say(next === 2 ? "Quiero… pero no jorobes: jugá bien." : next === 3 ? "¡Quiero retruco!" : "¡Quiero vale cuatro!", next === 3 ? 98 : next === 4 ? 109 : 86);
+    if (next < 4 && Math.random() < Math.min(0.38, 0.08 + courage * 0.34)) {
+      const counter = (next + 1) as 3 | 4;
+      setTrucoCaller("cpu");
+      cpuCallsTruco(counter);
+      return null;
+    }
+    say("Quiero, che. Seguimos jugando.", 86);
+    return next;
   }
 
-  function callTruco() {
-    if (stake >= 4 || trucoCaller === "player" || phase !== "playing" || pendingCall) return;
-    offerTrucoToCpu();
+  function callTruco(): number | null {
+    if (turn !== "player" || stake >= 4 || trucoCaller === "player" || phase !== "playing" || pendingCall) return null;
+    return offerTrucoToCpu();
   }
 
   function fold() {
-    if (phase !== "playing" || pendingCall) return;
+    if (turn !== "player" || phase !== "playing" || pendingCall) return;
     finishHand("cpu", stake, "Abandonaste, cobarde. ¡El cuello te arde!");
   }
 
@@ -385,13 +499,13 @@ export default function App() {
     if (rejected.kind === "envido") {
       setEnvidoDone(true);
       const points = rejectedEnvidoPoints(rejected.sequence, score.player, score.cpu);
-      addPoints("cpu", points);
+      bankPoints("cpu", points);
       restoreDeferredTruco(rejected.deferredTruco);
       say(`No quiero ${describeEnvido(rejected.sequence)}. ${points} para la CPU.`);
       void playMusic("noQuiero", sound);
     } else if (rejected.kind === "flor") {
       const points = rejected.mode === "flor" ? 3 : 4;
-      addPoints("cpu", points);
+      bankPoints("cpu", points);
       restoreDeferredTruco(rejected.deferredTruco);
       say(`Con Flor me achico. ${points} para la CPU.`, 73);
     } else {
@@ -407,7 +521,7 @@ export default function App() {
       const points = rejectedEnvidoPoints(envido.sequence, score.player, score.cpu);
       setPendingCall(null);
       setEnvidoDone(true);
-      addPoints("cpu", points);
+      bankPoints("cpu", points);
     }
     offerTrucoToCpu();
   }
@@ -417,26 +531,30 @@ export default function App() {
     callEnvido(call, pendingCall.nextStake);
   }
 
-  function raisePendingTruco() {
-    if (!pendingCall || pendingCall.kind !== "truco" || pendingCall.nextStake >= 4) return;
+  function raisePendingTruco(): number | null {
+    if (!pendingCall || pendingCall.kind !== "truco" || pendingCall.nextStake >= 4) return null;
     const raisedStake = (pendingCall.nextStake + 1) as 3 | 4;
     setPendingCall(null);
-    const cpuBest = Math.max(...cpuCards.map(trucoStrength));
+    const courage = cpuTrucoChance(cpuCards, tricks);
     void playMusic(raisedStake === 3 ? "retruco" : "vale4", sound);
-    if (cpuBest < 8 && Math.random() > 0.35) {
+    if (Math.random() > courage) {
       finishHand("player", pendingCall.nextStake, `No quiero tu ${raisedStake === 3 ? "retruco" : "vale cuatro"}.`);
-      return;
+      return null;
     }
     setStake(raisedStake);
     setTrucoCaller("player");
     say(`Quiero tu ${raisedStake === 3 ? "retruco" : "vale cuatro"}.`, raisedStake === 3 ? 98 : 109);
+    return raisedStake;
   }
 
   function nextHand() {
     if (matchWinner) {
       const next = freshHand();
       setScore({ player: 0, cpu: 0 });
+      handPointsRef.current = { player: 0, cpu: 0 };
+      setHandPoints({ player: 0, cpu: 0 });
       setPlayerCards(next.player);
+      setPlayerCardOrder(next.player.map((card) => card.id));
       setCpuCards(next.cpu);
       setTable([]);
       setTricks([]);
@@ -448,11 +566,16 @@ export default function App() {
       setHandNumber(1);
       setPendingCall(null);
       setOpeningChecked(false);
+      setMano("player");
+      setTurn("player");
+      setCpuDecisionMade(false);
       say("Revancha. Ahora ya sé cómo jugás.");
       return;
     }
     const next = freshHand();
+    const nextMano: Side = mano === "player" ? "cpu" : "player";
     setPlayerCards(next.player);
+    setPlayerCardOrder(next.player.map((card) => card.id));
     setCpuCards(next.cpu);
     setTable([]);
     setTricks([]);
@@ -463,53 +586,88 @@ export default function App() {
     setPhase("playing");
     setPendingCall(null);
     setOpeningChecked(false);
+    handPointsRef.current = { player: 0, cpu: 0 };
+    setHandPoints({ player: 0, cpu: 0 });
+    setMano(nextMano);
+    setTurn(nextMano);
+    setCpuDecisionMade(false);
     setHandNumber((value) => value + 1);
     say(CPU_TAUNTS[Math.floor(Math.random() * CPU_TAUNTS.length)]);
     void playMusic("deal", sound);
   }
 
-  function handleGameCommand(text: string): boolean {
+  function playCommandCard(index: 0 | 1 | 2, effectiveStake = stake, resolvedPendingCall = false): boolean {
+    const card = playerCards.find((item) => item.id === playerCardOrder[index]);
+    if (!card) {
+      say(`La carta ${index + 1} ya no está en tu mano.`);
+      return true;
+    }
+    playCard(card, effectiveStake, resolvedPendingCall);
+    return true;
+  }
+
+  function handleGameCommand(command: OriginalCommand): boolean {
     if (phase !== "playing") return false;
+    const { code, cardIndex, normalized: text } = command;
 
     if (pendingCall?.kind === "envido") {
       const raises = allowedEnvidoRaises(pendingCall.sequence);
-      if (text.includes("falta envido") && raises.includes("falta-envido")) { raisePendingEnvido("falta-envido"); return true; }
-      if ((text.includes("real envido") || text.includes("dos reales")) && raises.includes("real-envido")) { raisePendingEnvido("real-envido"); return true; }
-      if (text.includes("envido") && raises.includes("envido")) { raisePendingEnvido("envido"); return true; }
+      if (code === 4 && raises.includes("falta-envido")) { raisePendingEnvido("falta-envido"); return true; }
+      if ((code === 2 || code === 3) && raises.includes("real-envido")) { raisePendingEnvido("real-envido"); return true; }
+      if (code === 1 && raises.includes("envido")) { raisePendingEnvido("envido"); return true; }
       if (text.includes("no quiero") && text.includes("truco")) { answerEnvidoAndTruco(false); return true; }
       if (text.includes("quiero") && text.includes("truco")) { answerEnvidoAndTruco(true); return true; }
-      if (text === "quiero" || text === "de acuerdo" || text === "esta bien") { acceptPendingCall(); return true; }
-      if (text === "no" || text.includes("no quiero")) { rejectPendingCall(); return true; }
-      if (text.includes("truco")) { say("Primero contestá el Envido: quiero, no quiero o subí la apuesta."); return true; }
+      if (code === 24 || code === 0) { acceptPendingCall(); return true; }
+      if (code === 25) { rejectPendingCall(); return true; }
+      if (code >= 1 && code <= 4) { say("Mal cantado, che. Podés querer, no querer o subir sin bajar la apuesta."); return true; }
+      if (code > 0) { say("Primero contestá el Envido: quiero, no quiero o subí la apuesta."); return true; }
       return false;
     }
 
     if (pendingCall?.kind === "truco") {
-      if (!envidoDone && tricks.length === 0 && text.includes("falta envido")) { interruptTrucoWithEnvido("falta-envido"); return true; }
-      if (!envidoDone && tricks.length === 0 && text.includes("real envido")) { interruptTrucoWithEnvido("real-envido"); return true; }
-      if (!envidoDone && tricks.length === 0 && text.includes("envido")) { interruptTrucoWithEnvido("envido"); return true; }
-      if ((text.includes("retruco") || text.includes("vale 4") || text.includes("vale cuatro")) && pendingCall.nextStake < 4) { raisePendingTruco(); return true; }
-      if (text === "quiero" || text === "de acuerdo" || text === "esta bien") { acceptPendingCall(); return true; }
-      if (text === "no" || text.includes("no quiero")) { rejectPendingCall(); return true; }
+      if (!envidoDone && tricks.length === 0 && code === 4) { interruptTrucoWithEnvido("falta-envido"); return true; }
+      if (!envidoDone && tricks.length === 0 && (code === 2 || code === 3)) { interruptTrucoWithEnvido("real-envido"); return true; }
+      if (!envidoDone && tricks.length === 0 && code === 1) { interruptTrucoWithEnvido("envido"); return true; }
+
+      const retrucoCodes = [16, 17, 18, 19];
+      const valeFourCodes = [20, 21, 22, 23];
+      const requestsCorrectRaise = pendingCall.nextStake === 2
+        ? retrucoCodes.includes(code)
+        : pendingCall.nextStake === 3 && valeFourCodes.includes(code);
+      if (requestsCorrectRaise) {
+        const acceptedStake = raisePendingTruco();
+        if (acceptedStake && cardIndex !== undefined) playCommandCard(cardIndex, acceptedStake, true);
+        return true;
+      }
+      if (code === 24 || code === 0) { acceptPendingCall(); return true; }
+      if (code === 25 || code === 26) { rejectPendingCall(); return true; }
+      if (code > 0) { say(`Tenés que contestar ${pendingCallLabel(pendingCall)}: quiero, no quiero o una subida válida.`); return true; }
       return false;
     }
 
     if (pendingCall?.kind === "flor") {
-      if (text.includes("con flor me achico")) { rejectPendingCall(); return true; }
+      if (code === 8 || code === 25) { rejectPendingCall(); return true; }
       if (text.includes("contraflor al resto")) { raisePendingFlor("resto"); return true; }
-      if (text.includes("contraflor")) { raisePendingFlor("contraflor"); return true; }
-      if (text.includes("con flor") || text === "quiero") { acceptPendingCall(); return true; }
+      if (code === 7) { raisePendingFlor("contraflor"); return true; }
+      if (code === 6 || code === 24 || code === 0) { acceptPendingCall(); return true; }
+      if (code > 0) { say("Con Flor: quiero, me achico, contraflor o contraflor al resto."); return true; }
       return false;
     }
 
-    if (text.includes("falta envido")) { callEnvido("falta-envido"); return true; }
-    if (text.includes("real envido") || text.includes("dos reales")) { callEnvido("real-envido"); return true; }
-    if (text.includes("envido")) { callEnvido("envido"); return true; }
-    if (text.includes("flor")) { callFlor(); return true; }
-    if (text.includes("truco") || text.includes("retruco") || text.includes("vale 4") || text.includes("vale cuatro")) { callTruco(); return true; }
-    if (["mazo", "baraja", "me voy", "huyo", "rajo", "abandono"].some((word) => text.includes(word))) { fold(); return true; }
-    const cardMatch = text.match(/^carta\s*([123])$/);
-    if (cardMatch) { const card = playerCards[Number(cardMatch[1]) - 1]; if (card) playCard(card); return true; }
+    if (code === 4) { callEnvido("falta-envido"); return true; }
+    if (code === 2) { callEnvido("real-envido"); return true; }
+    if (code === 3) { say("Dos Reales Envido necesita un Real Envido anterior."); return true; }
+    if (code === 1) { callEnvido("envido"); return true; }
+    if (code === 5) { callFlor(); return true; }
+    if (code >= 9 && code <= 11 && cardIndex !== undefined) return playCommandCard(cardIndex);
+    if (code >= 12 && code <= 14 && cardIndex !== undefined) {
+      const acceptedStake = callTruco();
+      if (acceptedStake) playCommandCard(cardIndex, acceptedStake);
+      return true;
+    }
+    if (code === 15) { callTruco(); return true; }
+    if (code === 26) { fold(); return true; }
+    if (code > 0) { say("Ese canto no corresponde en este momento de la mano."); return true; }
     return false;
   }
 
@@ -517,16 +675,29 @@ export default function App() {
     event.preventDefault();
     const value = command.trim();
     if (!value) return;
-    const normalized = value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-    if (INSULT_STEMS.some((stem) => normalized.includes(stem))) {
-      say(DIRTY_REPLIES[Math.floor(Math.random() * DIRTY_REPLIES.length)]);
-      void playMusic("truco", sound);
-    } else if (handleGameCommand(normalized)) {
-      // The command already changed the current bid/card state.
-    } else if (normalized.includes("envido")) say("¿Dijiste envido? Usá el botón, humanoide.", 1);
-    else if (normalized.includes("truco")) say("Digue bien. ¡Joigue bien!", 86);
-    else if (/^(si|s|no|n)$/.test(normalized)) say("¿Qué me querés decir con eso? Cerrá bien, por favor.");
-    else say("¿Quién te entiende, mi duende?");
+    const parsed = parseOriginalCommand(value);
+    const language = classifyOriginalLanguage(parsed.normalized);
+
+    // Positive command codes return from the original parser before its
+    // language jokes. Code 0 (generic acceptance) continues through fallback.
+    if (parsed.code > 0 && handleGameCommand(parsed)) {
+      // The recovered command changed the bid/card state.
+    } else if (parsed.code <= 0 && ORIGINAL_EXIT_TOKENS.some((token) => parsed.normalized.includes(token))) {
+      stopMusic();
+      setStarted(false);
+    } else if (language === "short-yes") say("¿Qué me querés decir con 'S', salame?");
+    else if (language === "yes") say("¿Qué significa 'si'? Cerrá bien, por favor.");
+    else if (language === "short-no") say("¿Qué quiere decir 'n'? Cerrá bien, por favor.");
+    else if (language === "no") say("¿No qué? Cerrá bien, por favor.");
+    else if (language === "abandon") say(expandOriginalPhrase(ORIGINAL_ABANDON_REPLY));
+    else if (language === "insult") say(randomOriginalReply(ORIGINAL_DIRTY_REPLIES));
+    else if (language === "truque") say(randomOriginalReply(ORIGINAL_TRUQUE_REPLIES));
+    else if (language === "diminutive") say(expandOriginalPhrase(ORIGINAL_DIMINUTIVE_REPLY));
+    else if (language === "sexual") say(expandOriginalPhrase(ORIGINAL_SEXUAL_REPLY));
+    else if (language === "credits") say(expandOriginalPhrase(ORIGINAL_CREDITS_REPLY));
+    else if (handleGameCommand(parsed)) {
+      // Code 0 is context-sensitive and is consumed here when appropriate.
+    } else say("¿Quién te entiende, mi duende?");
     setCommand("");
   }
 
@@ -546,7 +717,7 @@ export default function App() {
       <main className="intro-shell">
         <div className="intro-card glass">
           <p className="eyebrow">RECUPERACIÓN DIGITAL // 1986 → WEB</p>
-          <img src="/original/pantalla-bsave.png" alt="Pantalla original de Truco Arbiser recuperada desde CGA" />
+          <img src="/restored/pantalla-fullcolor.png" alt="Restauración a todo color de la pantalla de Truco Arbiser" />
           <div className="intro-copy">
             <h1>El truco volvió a la mesa.</h1>
             <p>Cartas, versos, música y voces extraídos del programa original. Baraja española y una CPU que todavía tiene memoria.</p>
@@ -578,7 +749,7 @@ export default function App() {
           <div className="table glass">
             <div className="scanlines" />
             <section className="cpu-zone">
-              <div className="player-label"><span className="status-dot" /> CPU_ARBITER <em>{3 - tricks.length} cartas</em></div>
+              <div className="player-label"><span className="status-dot" /> CPU_ARBITER <em>{cpuCards.length} cartas · {mano === "cpu" ? "MANO" : turn === "cpu" ? "TURNO" : "ESPERA"}</em></div>
               <div className="cpu-hand">{cpuCards.map((card) => <CardBack key={card.id} />)}</div>
             </section>
 
@@ -590,10 +761,10 @@ export default function App() {
                 {[0, 1, 2].map((index) => {
                   const play = table[index];
                   return (
-                    <div className={`trick-pair ${play ? "occupied" : ""}`} key={index}>
-                      <div className="played-slot cpu-slot">{play ? <PlayingCard card={play.cpu} compact /> : <span>CPU</span>}</div>
+                    <div className={`trick-pair ${play?.player || play?.cpu ? "occupied" : ""}`} key={index}>
+                      <div className="played-slot cpu-slot">{play?.cpu ? <PlayingCard card={play.cpu} compact /> : <span>CPU</span>}</div>
                       <span className="trick-number">BAZA {index + 1}</span>
-                      <div className="played-slot player-slot">{play ? <PlayingCard card={play.player} compact /> : <span>VOS</span>}</div>
+                      <div className="played-slot player-slot">{play?.player ? <PlayingCard card={play.player} compact /> : <span>VOS</span>}</div>
                     </div>
                   );
                 })}
@@ -601,9 +772,9 @@ export default function App() {
             </section>
 
             <section className="player-zone">
-              <div className="player-label"><span className="status-dot human" /> VOS <em>{envidoPoints(playerCards)} de envido</em></div>
+              <div className="player-label"><span className="status-dot human" /> VOS <em>{envidoPoints(fullPlayerHand)} de envido · {mano === "player" ? "MANO" : turn === "player" ? "TURNO" : "ESPERÁ"}</em></div>
               <div className="player-hand">
-                {playerCards.map((card) => <PlayingCard key={card.id} card={card} onPlay={() => playCard(card)} disabled={phase !== "playing" || pendingCall !== null || !openingChecked} />)}
+                {playerCards.map((card) => <PlayingCard key={card.id} card={card} onPlay={() => playCard(card)} disabled={phase !== "playing" || turn !== "player" || pendingCall !== null || !openingChecked} />)}
               </div>
             </section>
           </div>
@@ -613,6 +784,7 @@ export default function App() {
               <div className="panel-heading"><span>TRUCÓMETRO</span><em>A 30</em></div>
               <Score label="CPU" value={score.cpu} active={lastWinner === "cpu"} />
               <Score label="VOS" value={score.player} active={lastWinner === "player"} />
+              {handPoints.player || handPoints.cpu ? <small className="pending-points">AL CIERRE · CPU +{handPoints.cpu} / VOS +{handPoints.player}</small> : null}
               <div className="score-track"><i style={{ width: `${Math.min(100, (score.player / 30) * 100)}%` }} /></div>
             </section>
 
@@ -627,7 +799,7 @@ export default function App() {
                 <div className="bid-options">
                   <button onClick={rejectPendingCall}>{pendingCall.kind === "flor" ? "Con flor me achico" : "No quiero"}<small>Rechazar</small></button>
                   {pendingCall.kind === "envido" ? <>
-                    {allowedEnvidoRaises(pendingCall.sequence).map((call) => <button key={call} onClick={() => raisePendingEnvido(call)}>{call === "envido" && pendingCall.sequence.includes("envido") ? "Envido envido" : envidoLabel[call]}<small>Subir el tanto</small></button>)}
+                    {allowedEnvidoRaises(pendingCall.sequence).map((call) => <button key={call} onClick={() => raisePendingEnvido(call)}>{call === "envido" && pendingCall.sequence.includes("envido") ? "Envido envido" : call === "real-envido" && pendingCall.sequence.includes("real-envido") ? "Dos Reales Envido" : envidoLabel[call]}<small>Subir el tanto</small></button>)}
                     {stake < 4 && trucoCaller !== "player" ? <>
                       <button onClick={() => answerEnvidoAndTruco(true)}>Quiero y {trucoLabel}<small>Resolver y cantar</small></button>
                       <button onClick={() => answerEnvidoAndTruco(false)}>No quiero y {trucoLabel}<small>Ceder y cantar</small></button>
@@ -647,14 +819,14 @@ export default function App() {
                   </> : null}
                 </div>
               </> : phase === "playing" ? <>
-                <button className="action-primary" onClick={callTruco} disabled={!openingChecked || stake >= 4 || trucoCaller === "player"}>{trucoLabel}<small>{!openingChecked ? "La CPU revisa sus cartas" : trucoCaller === "player" ? "Esperá que suba la CPU" : "Subir la apuesta"}</small></button>
+                <button className="action-primary" onClick={callTruco} disabled={!openingChecked || turn !== "player" || stake >= 4 || trucoCaller === "player"}>{trucoLabel}<small>{!openingChecked ? "La CPU revisa sus cartas" : turn !== "player" ? "Está jugando la CPU" : trucoCaller === "player" ? "Esperá que suba la CPU" : "Subir la apuesta"}</small></button>
                 <div className="bid-options normal-bids">
-                  <button onClick={() => callEnvido("envido")} disabled={!openingChecked || envidoDone || tricks.length > 0 || canFlor}>Envido<small>Dos puntos</small></button>
-                  <button onClick={() => callEnvido("real-envido")} disabled={!openingChecked || envidoDone || tricks.length > 0 || canFlor}>Real Envido<small>Tres puntos</small></button>
-                  <button onClick={() => callEnvido("falta-envido")} disabled={!openingChecked || envidoDone || tricks.length > 0 || canFlor}>Falta Envido<small>Hasta las buenas</small></button>
-                  <button onClick={callFlor} disabled={!openingChecked || !canFlor}>Flor<small>{canFlor ? "La tenés" : "Sin flor"}</small></button>
+                  <button onClick={() => callEnvido("envido")} disabled={!openingChecked || turn !== "player" || envidoDone || tricks.length > 0 || canFlor}>Envido<small>Dos puntos</small></button>
+                  <button onClick={() => callEnvido("real-envido")} disabled={!openingChecked || turn !== "player" || envidoDone || tricks.length > 0 || canFlor}>Real Envido<small>Tres puntos</small></button>
+                  <button onClick={() => callEnvido("falta-envido")} disabled={!openingChecked || turn !== "player" || envidoDone || tricks.length > 0 || canFlor}>Falta Envido<small>Hasta las buenas</small></button>
+                  <button onClick={callFlor} disabled={!openingChecked || turn !== "player" || !canFlor}>Flor<small>{canFlor ? "La tenés" : "Sin flor"}</small></button>
                 </div>
-                <button className="fold-button" onClick={fold}>Irse al mazo</button>
+                <button className="fold-button" onClick={fold} disabled={turn !== "player"}>Irse al mazo</button>
               </> : <button className="action-primary next" onClick={nextHand}>{matchWinner ? "REVANCHA" : "SIGUIENTE MANO"}<small>{matchWinner ? `${matchWinner} ganó la partida` : "Volver a repartir"}</small></button>}
             </section>
 
@@ -677,9 +849,9 @@ export default function App() {
             <img src="/original/pantalla-bsave.png" alt="Título CGA recuperado" />
           </article>
           <div className="recovery-grid">
-            <article className="glass recovery-card"><span className="big-number">04</span><h3>Buffers de cartas</h3><p>46 × 60 píxeles, 2 bits por píxel. Oro, copa, espada y basto, ahora usados dentro de las cartas glass.</p><div className="sprite-row">{["oro", "copa", "espada", "basto"].map((suit) => <img key={suit} src={`/original/carta-${suit}.png`} alt={suit} />)}</div></article>
+            <article className="glass recovery-card"><span className="big-number">04</span><h3>Buffers de cartas</h3><p>Los originales de 46 × 60 píxeles y 2 bits por píxel guiaron estas restauraciones VGA a todo color. Los buffers CGA permanecen intactos en el archivo.</p><div className="sprite-row">{["oro", "copa", "espada", "basto"].map((suit) => <img key={suit} src={`/restored/carta-${suit}-fullcolor.png`} alt={`${suit} restaurado a todo color`} />)}</div></article>
             <article className="glass recovery-card"><span className="big-number">156</span><h3>Voces originales</h3><p>Los `.VOZ` son un flujo de un bit. El navegador los desempaqueta y reproduce con WebAudio.</p><button onClick={() => void playVoice(86, voice)}>▶ Probar “Truco”</button></article>
-            <article className="glass recovery-card code-card"><span className="big-number">10</span><h3>Raíces de insultos</h3><p>Recuperadas del ejecutable:</p><code>{INSULT_STEMS.join(" · ")}</code></article>
+            <article className="glass recovery-card code-card"><span className="big-number">10</span><h3>Raíces de insultos</h3><p>Recuperadas del ejecutable:</p><code>{ORIGINAL_INSULT_STEMS.join(" · ")}</code></article>
           </div>
           <section className="dialogue-browser glass">
             <div className="panel-heading"><span>DIÁLOGOS RECUPERADOS</span><em>{dialogues.length || 156} REGISTROS</em></div>

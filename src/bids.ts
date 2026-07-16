@@ -10,8 +10,11 @@ export function allowedEnvidoRaises(sequence: EnvidoCall[]): EnvidoCall[] {
   if (sequence.includes("falta-envido")) return [];
   const envidos = sequence.filter((call) => call === "envido").length;
   const reales = sequence.filter((call) => call === "real-envido").length;
+  const last = sequence.at(-1);
   const raises: EnvidoCall[] = [];
-  if (envidos < 2) raises.push("envido");
+  // El Envido sólo puede repetirse inmediatamente; nunca puede bajar un
+  // Real Envido ya cantado (el original responde "mal cantado, che").
+  if (last === "envido" && envidos < 2) raises.push("envido");
   if (reales < 2) raises.push("real-envido");
   raises.push("falta-envido");
   return raises;
@@ -39,4 +42,3 @@ export function describeEnvido(sequence: EnvidoCall[]): string {
   if (reales === 2 && envidos === 0) return "Dos Reales Envido";
   return sequence.map((call) => envidoLabel[call]).join(" + ");
 }
-

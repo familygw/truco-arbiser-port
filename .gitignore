@@ -25,6 +25,7 @@
 /build
 /.wrangler
 /.openai
+/reverse-engineering
 
 # debug
 npm-debug.log*
