@@ -1,0 +1,18 @@
+{
+  "source": "Truco Arbiser para DOS (1982-1986)",
+  "dialogueRecords": 156,
+  "voiceSamples": 156,
+  "voiceFormat": "Flujo de audio de 1 bit, empaquetado MSB-first; se decodifica en WebAudio.",
+  "insultStems": [
+    "put",
+    "mierd",
+    "pij",
+    "conch",
+    "bolud",
+    "pelotu",
+    "caraj",
+    "chot",
+    "fuck",
+    "garch"
+  ]
+}
