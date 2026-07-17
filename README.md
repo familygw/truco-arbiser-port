@@ -60,6 +60,25 @@ exitoso, el juego estará disponible en:
 https://familygw.github.io/truco-arbiser-port/
 ```
 
+Si el paso `Configure Pages` falla con `Error: Get Pages site failed` o `HTTP
+404`, Pages todavía no fue habilitado. Configuralo desde **Settings > Pages** o,
+con GitHub CLI autenticado como administrador del repositorio, ejecutá:
+
+```bash
+gh api --method POST \
+    -H "Accept: application/vnd.github+json" \
+    "/repos/familygw/truco-arbiser-port/pages" \
+    -f build_type=workflow
+```
+
+La respuesta `HTTP 409` con `GitHub Pages is already enabled` no es un error de
+configuración: indica que Pages ya existe. En ambos casos, reejecutá el
+workflow después de confirmar que el tipo de compilación es `workflow`:
+
+```bash
+gh api "/repos/familygw/truco-arbiser-port/pages"
+```
+
 ## Pruebas
 
 La equivalencia del parser y las reglas recuperadas se comprueba con:
