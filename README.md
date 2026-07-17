@@ -8,6 +8,8 @@ El port fue desarrollado por **Carlos A. Leguizamón**. Recupera recursos del
 programa original y reimplementa su funcionamiento para navegadores modernos,
 manteniendo su humor, picardía gauchesca y forma conversacional de jugar.
 
+Versión Online: [https://familygw.github.io/truco-arbiser-port](https://familygw.github.io/truco-arbiser-port/)
+
 ## Estado
 
 El proyecto se encuentra en estado **MVP jugable**. Incluye:
@@ -54,11 +56,7 @@ compila y publica el sitio en cada push a `master`.
 Antes de ejecutar el workflow por primera vez, abrí **Settings > Pages** y
 seleccioná **GitHub Actions** como fuente de publicación. El `GITHUB_TOKEN` del
 workflow no puede habilitar Pages por sí solo. Tras el primer despliegue
-exitoso, el juego estará disponible en:
-
-```text
-[Truco Arbiser Port](https://familygw.github.io/truco-arbiser-port/)
-```
+exitoso, el juego estará disponible en: [Truco Arbiser Port](https://familygw.github.io/truco-arbiser-port/)
 
 Si el paso `Configure Pages` falla con `Error: Get Pages site failed` o `HTTP
 404`, Pages todavía no fue habilitado. Configuralo desde **Settings > Pages** o,
