@@ -51,6 +51,7 @@ const DEFAULT_LENGTH = 4;
 const DEFAULT_TEMPO = 120;
 // Empirically closer to VOZ.EXE than 48 kHz; kept separate from PLAY timing.
 const VOZ_SAMPLE_RATE = 16_000;
+const assetUrl = (path: string) => `${import.meta.env.BASE_URL}${path}`;
 
 let context: AudioContext | null = null;
 
@@ -232,7 +233,7 @@ export async function playVoice(index: number, enabled = true): Promise<void> {
   const ctx = audioContext();
   if (!ctx) return;
   if (ctx.state === "suspended") await ctx.resume();
-  const response = await fetch(`/original/voices/t${String(index).padStart(3, "0")}.voz`);
+  const response = await fetch(assetUrl(`original/voices/t${String(index).padStart(3, "0")}.voz`));
   if (!response.ok) return;
   const packed = new Uint8Array(await response.arrayBuffer());
   const buffer = ctx.createBuffer(1, packed.length * 8, VOZ_SAMPLE_RATE);

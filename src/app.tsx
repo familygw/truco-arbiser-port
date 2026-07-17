@@ -41,6 +41,8 @@ type TantoAudit = {
   verdict: string;
 };
 
+const assetUrl = (path: string) => `${import.meta.env.BASE_URL}${path}`;
+
 const CPU_TAUNTS = [
   "¿Sos humano o androide? ¿Cuántos Kbytes tiene tu marote?",
   "No te la vas a llevar de arriba.",
@@ -107,7 +109,7 @@ function PlayingCard({ card, onPlay, disabled = false, compact = false }: { card
   const content = (
     <>
       <span className="card-rank">{card.rank}</span>
-      <img src={`/restored/carta-${card.suit}-fullcolor.png`} alt={`${card.rank} de ${suitLabel[card.suit]}`} />
+      <img src={assetUrl(`restored/carta-${card.suit}-fullcolor.png`)} alt={`${card.rank} de ${suitLabel[card.suit]}`} />
       <span className="card-suit">{suitLabel[card.suit]}</span>
     </>
   );
@@ -172,7 +174,7 @@ export default function App() {
   const [introBlocked, setIntroBlocked] = useState(true);
 
   useEffect(() => {
-    fetch("/original/dialogos.json").then((response) => response.json()).then(setDialogues).catch(() => setDialogues([]));
+    fetch(assetUrl("original/dialogos.json")).then((response) => response.json()).then(setDialogues).catch(() => setDialogues([]));
   }, []);
 
   useEffect(() => {
@@ -887,7 +889,7 @@ export default function App() {
       <main className="intro-shell">
         <div className="intro-card glass">
           <p className="eyebrow">RECUPERACIÓN DIGITAL // 1986 → WEB</p>
-          <img src="/restored/pantalla-fullcolor.png" alt="Restauración a todo color de la pantalla de Truco Arbiser" />
+          <img src={assetUrl("restored/pantalla-fullcolor.png")} alt="Restauración a todo color de la pantalla de Truco Arbiser" />
           <div className="intro-copy">
             <h1>El truco volvió a la mesa.</h1>
             <p>Cartas, versos, música y voces extraídos del programa original. Baraja española y una CPU que todavía tiene memoria.</p>
@@ -1040,7 +1042,7 @@ export default function App() {
         <section className="archive-layout">
           <article className="archive-hero glass">
             <div><p className="eyebrow">ARQUEOLOGÍA DEL EJECUTABLE</p><h2>No fue una imitación.<br />Fue una excavación.</h2><p>Los recursos que ves acá salieron de los archivos originales: buffers gráficos CGA de QuickBasic, 156 registros de diálogo y sus 156 muestras de voz de un bit.</p></div>
-            <img src="/original/pantalla-bsave.png" alt="Título CGA recuperado" />
+            <img src={assetUrl("original/pantalla-bsave.png")} alt="Título CGA recuperado" />
           </article>
           <div className="recovery-grid">
             <article className="glass recovery-card"><span className="big-number">04</span><h3>Buffers de cartas</h3><p>Los originales de 46 × 60 píxeles y 2 bits por píxel guiaron estas restauraciones VGA a todo color. Los buffers CGA permanecen intactos en el archivo.</p><div className="sprite-row">{["oro", "copa", "espada", "basto"].map((suit) => <img key={suit} src={`/restored/carta-${suit}-fullcolor.png`} alt={`${suit} restaurado a todo color`} />)}</div></article>

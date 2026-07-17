@@ -46,6 +46,19 @@ npm run build
 npm run preview
 ```
 
+## Publicación en GitHub Pages
+
+El workflow [`.github/workflows/deploy-pages.yml`](./.github/workflows/deploy-pages.yml)
+compila y publica el sitio en cada push a `master`.
+
+En el repositorio de GitHub, abrí **Settings > Pages** y seleccioná **GitHub
+Actions** como fuente de publicación. Tras el primer despliegue exitoso, el
+juego estará disponible en:
+
+```text
+https://familygw.github.io/truco-arbiser-port/
+```
+
 ## Pruebas
 
 La equivalencia del parser y las reglas recuperadas se comprueba con:
