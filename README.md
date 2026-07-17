@@ -57,7 +57,7 @@ workflow no puede habilitar Pages por sí solo. Tras el primer despliegue
 exitoso, el juego estará disponible en:
 
 ```text
-https://familygw.github.io/truco-arbiser-port/
+[Truco Arbiser Port](https://familygw.github.io/truco-arbiser-port/)
 ```
 
 Si el paso `Configure Pages` falla con `Error: Get Pages site failed` o `HTTP
