@@ -17,7 +17,8 @@ El proyecto se encuentra en estado **MVP jugable**. Incluye:
 - Flor, Contraflor y Contraflor al Resto;
 - Truco, Retruco y Vale Cuatro con respuestas y subidas encadenadas;
 - mano y turnos alternados, pardas y tres bazas visibles;
-- CPU con estrategia probabilística, riesgo y posibilidad de mentir;
+- CPU con estrategia probabilística, riesgo y posibilidad de mentir en Truco,
+  Envido y Flor;
 - parser conversacional, insultos y respuestas recuperadas del ejecutable;
 - melodías QuickBasic y reproducción de las voces `.VOZ` originales;
 - pantalla y cartas restauradas a todo color sobre una interfaz glassmorphism.
@@ -66,7 +67,11 @@ texto del original:
 - `mazo`, `baraja`, `chau` o `rajo` para abandonar la mano.
 
 La CPU puede cantar con buenas cartas o mentir. Una frase segura no significa
-que realmente tenga un buen tanto o una mano fuerte.
+que realmente tenga un buen tanto, una Flor o una mano fuerte. Cuando un
+Envido es querido, la CPU declara sus tantos y el jugador puede escribir un
+número entre `0` y `33`: las cartas se muestran al cerrar la mano y una mentira
+descubierta cambia el destinatario de los puntos. Flor funciona del mismo modo
+y se puede cantar aun sin tenerla.
 
 Los navegadores pueden bloquear el audio automático. Si sucede, usá el botón
 **Activar sonido del splash**. Música y voz también se pueden activar o

@@ -145,6 +145,7 @@ button.playing-card:disabled { cursor: default; opacity: .72; }
 .score-row em { font-size: 7px; color: #6d5f57; font-style: normal; }
 .score-track { height: 3px; background: rgba(255,255,255,.06); margin: 11px 8px 2px; overflow: hidden; }
 .pending-points { display: block; margin: 10px 8px 2px; color: var(--orange-soft); font: 8px "DM Mono", monospace; letter-spacing: .08em; }
+.pending-points.audit-pending { color: #e7c0aa; border-top: 1px solid rgba(255,255,255,.055); padding-top: 9px; }
 .score-track i { display: block; height: 100%; background: var(--orange); box-shadow: 0 0 12px var(--orange); transition: width .4s ease; }
 .actions { flex: 1; }
 .actions button, .recovery-card button { border: 1px solid rgba(255,133,70,.16); background: rgba(255,255,255,.035); border-radius: 10px; padding: 12px; text-align: left; cursor: pointer; transition: .2s ease; }
@@ -158,6 +159,11 @@ button.playing-card:disabled { cursor: default; opacity: .72; }
 .action-grid button { min-width: 0; }
 .bid-options { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
 .bid-options button { min-width: 0; }
+.claim-entry { display: grid; grid-template-columns: 78px 1fr; gap: 8px; margin-top: 8px; }
+.claim-entry input { width: 100%; min-width: 0; border: 1px solid rgba(255,133,70,.25); border-radius: 10px; background: rgba(0,0,0,.28); color: var(--orange-soft); font: 18px "DM Mono", monospace; text-align: center; }
+.claim-entry input::placeholder { color: #5f5048; }
+.claim-entry button { min-width: 0; }
+.bluff-hint { margin: 10px 4px 0; color: #77675e; font: 8px/1.55 "DM Mono", monospace; letter-spacing: .045em; }
 .normal-bids { margin-bottom: 2px; }
 .call-notice { border: 1px solid rgba(255,106,26,.28); background: rgba(255,106,26,.08); border-radius: 10px; padding: 12px; margin-bottom: 8px; text-align: center; }
 .call-notice small { display: block; color: #8b7568; font: 7px "DM Mono", monospace; letter-spacing: .1em; }

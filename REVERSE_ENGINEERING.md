@@ -169,6 +169,33 @@ Una partida instrumentada sobre la versión js-dos confirmó además que:
 
 El port modela estos hallazgos con turnos explícitos, bazas parciales, puntaje
 pendiente por mano y una política probabilística con una posibilidad real de
-farol incluso con cartas débiles. Flor no admite farol: sólo se canta cuando
-las tres cartas son del mismo palo. La calibración exacta de probabilidades
-continúa siendo aproximada hasta aislar por completo la rutina estratégica.
+farol incluso con cartas débiles.
+
+## Evidencia y adaptación de la mentira
+
+El banco original no contiene una voz exclusiva para sancionar una declaración
+falsa, pero sí confirma que la mentira forma parte deliberada de la personalidad
+de la CPU. Los registros 102 y 105 dicen `Quiero Retruco` «mintiendo», el 117
+canta `Vale Cuatro` «al compás de la mentira» y el 46 reconoce que no tiene
+«nada» antes de desafiar con `Falta Envido`. Además, el mapa estático localiza
+17 consumidores directos de los códigos 5–8 de Flor en distintos bloques de la
+máquina de estados.
+
+La frecuencia y la penalización exactas no quedaron aisladas de manera
+inequívoca en el desensamblado disponible. El port conserva por eso una frontera
+explícita entre evidencia y adaptación:
+
+- la CPU infla aleatoriamente sus tantos con mayor frecuencia cuando tiene un
+  Envido débil y sólo excepcionalmente cuando ya tiene 30 o más;
+- la CPU puede cantar una Flor inexistente con una probabilidad baja, algo
+  mayor cuando va perdiendo;
+- el jugador también puede declarar tantos falsos o cantar Flor sin tenerla;
+- el tanto queda en revisión, las cartas se muestran al cierre y los puntos se
+  entregan al lado cuya declaración resulte válida;
+- si ambos mintieron, prevalece el valor real y la condición de mano resuelve
+  una igualdad.
+
+Estas probabilidades son una calibración del port basada en los diálogos y en
+el comportamiento observado; no se presentan como constantes recuperadas del
+QuickBasic original. Se podrán reemplazar sin alterar la máquina de estados
+cuando se termine de aislar la rutina estratégica.
