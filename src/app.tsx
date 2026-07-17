@@ -121,6 +121,8 @@ export default function App() {
   const [command, setCommand] = useState("");
   const [sound, setSound] = useState(true);
   const [voice, setVoice] = useState(false);
+  const [florEnabled, setFlorEnabled] = useState(true);
+  const [startAsMano, setStartAsMano] = useState(true);
   const [handNumber, setHandNumber] = useState(1);
   const [dialogues, setDialogues] = useState<Dialogue[]>([]);
   const [pendingCall, setPendingCall] = useState<PendingCall | null>(null);
@@ -159,7 +161,7 @@ export default function App() {
   const matchWinner = score.player >= 30 ? "Vos" : score.cpu >= 30 ? "La CPU" : null;
   const fullPlayerHand = useMemo(() => [...playerCards, ...table.flatMap((play) => play.player ? [play.player] : [])], [playerCards, table]);
   const fullCpuHand = useMemo(() => [...cpuCards, ...table.flatMap((play) => play.cpu ? [play.cpu] : [])], [cpuCards, table]);
-  const canFlor = hasFlor(fullPlayerHand) && !envidoDone && tricks.length === 0;
+  const canFlor = florEnabled && hasFlor(fullPlayerHand) && !envidoDone && tricks.length === 0;
   const trucoLabel = stake === 1 ? "Truco" : stake === 2 ? "Retruco" : stake === 3 ? "Vale 4" : "Cantado";
 
   useEffect(() => {
@@ -247,7 +249,7 @@ export default function App() {
     if (!cpuDecisionMade) {
       setCpuDecisionMade(true);
       const cpuEnvido = envidoPoints(fullCpuHand);
-      if (!envidoDone && tricks.length === 0 && hasFlor(fullCpuHand)) {
+      if (florEnabled && !envidoDone && tricks.length === 0 && hasFlor(fullCpuHand)) {
         setEnvidoDone(true);
         void playMusic("flor", sound);
         if (hasFlor(fullPlayerHand)) {
@@ -327,7 +329,7 @@ export default function App() {
   }
 
   function cpuRespondsToEnvido(sequence: EnvidoCall[], deferredTruco?: 2 | 3 | 4) {
-    const cpuHasFlor = hasFlor(fullCpuHand);
+    const cpuHasFlor = florEnabled && hasFlor(fullCpuHand);
     if (cpuHasFlor) {
       setEnvidoDone(true);
       void playMusic("flor", sound);
@@ -550,6 +552,7 @@ export default function App() {
   function nextHand() {
     if (matchWinner) {
       const next = freshHand();
+      const firstMano: Side = startAsMano ? "player" : "cpu";
       setScore({ player: 0, cpu: 0 });
       handPointsRef.current = { player: 0, cpu: 0 };
       setHandPoints({ player: 0, cpu: 0 });
@@ -566,8 +569,8 @@ export default function App() {
       setHandNumber(1);
       setPendingCall(null);
       setOpeningChecked(false);
-      setMano("player");
-      setTurn("player");
+      setMano(firstMano);
+      setTurn(firstMano);
       setCpuDecisionMade(false);
       say("Revancha. Ahora ya sé cómo jugás.");
       return;
@@ -658,7 +661,11 @@ export default function App() {
     if (code === 2) { callEnvido("real-envido"); return true; }
     if (code === 3) { say("Dos Reales Envido necesita un Real Envido anterior."); return true; }
     if (code === 1) { callEnvido("envido"); return true; }
-    if (code === 5) { callFlor(); return true; }
+    if (code === 5) {
+      if (!florEnabled) say("Esta partida se juega sin Flor, che.");
+      else callFlor();
+      return true;
+    }
     if (code >= 9 && code <= 11 && cardIndex !== undefined) return playCommandCard(cardIndex);
     if (code >= 12 && code <= 14 && cardIndex !== undefined) {
       const acceptedStake = callTruco();
@@ -703,6 +710,28 @@ export default function App() {
 
   function startGame() {
     stopMusic();
+    const next = freshHand();
+    const firstMano: Side = startAsMano ? "player" : "cpu";
+    setPlayerCards(next.player);
+    setPlayerCardOrder(next.player.map((card) => card.id));
+    setCpuCards(next.cpu);
+    setTable([]);
+    setTricks([]);
+    setScore({ player: 0, cpu: 0 });
+    handPointsRef.current = { player: 0, cpu: 0 };
+    setHandPoints({ player: 0, cpu: 0 });
+    setStake(1);
+    setTrucoCaller(null);
+    setEnvidoDone(false);
+    setPhase("playing");
+    setSpeech(firstMano === "player" ? "Sos mano. Elegí una carta o cantá." : "La CPU es mano. Mirá bien cómo arranca.");
+    setLastWinner(null);
+    setHandNumber(1);
+    setPendingCall(null);
+    setOpeningChecked(false);
+    setMano(firstMano);
+    setTurn(firstMano);
+    setCpuDecisionMade(false);
     setStarted(true);
   }
 
@@ -722,9 +751,19 @@ export default function App() {
             <h1>El truco volvió a la mesa.</h1>
             <p>Cartas, versos, música y voces extraídos del programa original. Baraja española y una CPU que todavía tiene memoria.</p>
           </div>
+          <div className="intro-options" aria-label="Opciones de la partida">
+            <button className="intro-option" type="button" aria-pressed={florEnabled} onClick={() => setFlorEnabled((value) => !value)}>
+              <span><strong>Jugar con Flor</strong><em>{florEnabled ? "Flor, contraflor y al resto" : "Sólo envido"}</em></span>
+              <i aria-hidden="true"><b /></i>
+            </button>
+            <button className="intro-option" type="button" aria-pressed={startAsMano} onClick={() => setStartAsMano((value) => !value)}>
+              <span><strong>Quiero ser mano</strong><em>{startAsMano ? "Vos tirás primero" : "La CPU tira primero"}</em></span>
+              <i aria-hidden="true"><b /></i>
+            </button>
+          </div>
           {introBlocked ? <button className="sound-unlock" onClick={() => void activateSplashAudio()}>▶ ACTIVAR SONIDO DEL SPLASH</button> : null}
           <button className="primary-button" onClick={startGame}>JUGAR PARTIDA <span>↗</span></button>
-          <small>Juego original por Ariel y Enrique Arbiser · Port web por Carlos A. Leguizamón</small>
+          <small className="intro-credit">Juego original por Ariel y Enrique Arbiser · Port web por Carlos A. Leguizamón</small>
         </div>
       </main>
     );
@@ -824,7 +863,7 @@ export default function App() {
                   <button onClick={() => callEnvido("envido")} disabled={!openingChecked || turn !== "player" || envidoDone || tricks.length > 0 || canFlor}>Envido<small>Dos puntos</small></button>
                   <button onClick={() => callEnvido("real-envido")} disabled={!openingChecked || turn !== "player" || envidoDone || tricks.length > 0 || canFlor}>Real Envido<small>Tres puntos</small></button>
                   <button onClick={() => callEnvido("falta-envido")} disabled={!openingChecked || turn !== "player" || envidoDone || tricks.length > 0 || canFlor}>Falta Envido<small>Hasta las buenas</small></button>
-                  <button onClick={callFlor} disabled={!openingChecked || turn !== "player" || !canFlor}>Flor<small>{canFlor ? "La tenés" : "Sin flor"}</small></button>
+                  <button onClick={callFlor} disabled={!openingChecked || turn !== "player" || !canFlor}>Flor<small>{!florEnabled ? "Desactivada" : canFlor ? "La tenés" : "Sin flor"}</small></button>
                 </div>
                 <button className="fold-button" onClick={fold} disabled={turn !== "player"}>Irse al mazo</button>
               </> : <button className="action-primary next" onClick={nextHand}>{matchWinner ? "REVANCHA" : "SIGUIENTE MANO"}<small>{matchWinner ? `${matchWinner} ganó la partida` : "Volver a repartir"}</small></button>}
