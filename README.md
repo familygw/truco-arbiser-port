@@ -51,9 +51,10 @@ npm run preview
 El workflow [`.github/workflows/deploy-pages.yml`](./.github/workflows/deploy-pages.yml)
 compila y publica el sitio en cada push a `master`.
 
-En el repositorio de GitHub, abrí **Settings > Pages** y seleccioná **GitHub
-Actions** como fuente de publicación. Tras el primer despliegue exitoso, el
-juego estará disponible en:
+Antes de ejecutar el workflow por primera vez, abrí **Settings > Pages** y
+seleccioná **GitHub Actions** como fuente de publicación. El `GITHUB_TOKEN` del
+workflow no puede habilitar Pages por sí solo. Tras el primer despliegue
+exitoso, el juego estará disponible en:
 
 ```text
 https://familygw.github.io/truco-arbiser-port/
