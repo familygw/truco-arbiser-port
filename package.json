@@ -1,6 +1,6 @@
 {
   "name": "truco-arbiser-web",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Port web de preservación del Truco Arbiser para DOS, con recursos recuperados y lógica reimplementada.",
   "author": "Carlos A. Leguizamón",
   "contributors": [

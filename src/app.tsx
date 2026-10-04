@@ -915,7 +915,7 @@ export default function App() {
   return (
     <main className="app-shell">
       <header className="topbar glass">
-        <div className="brand"><span className="brand-mark">TA</span><div><strong>TRUCO ARBISER</strong><small>WEB PORT // BUILD 0.1</small></div></div>
+        <div className="brand"><span className="brand-mark">TA</span><div><strong>TRUCO ARBISER</strong><small>WEB PORT // BUILD 0.2</small></div></div>
         <nav aria-label="Vistas">
           <button className={view === "game" ? "selected" : ""} onClick={() => setView("game")}>Partida</button>
           <button className={view === "archive" ? "selected" : ""} onClick={() => setView("archive")}>Archivo recuperado</button>
