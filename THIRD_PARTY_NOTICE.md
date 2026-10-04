@@ -11,7 +11,10 @@ DOS original o sobre sus gráficos, voces, textos, melodías y demás recursos
 recuperados.
 
 Los archivos de `public/original`, las reconstrucciones derivadas de ellos y
-los archivos DOS utilizados durante la ingeniería inversa conservan la autoría
+los archivos DOS utilizados durante la ingeniería inversa y el grafo de
+decisiones recuperado en `src/original-truco-program.json`, el ciclo completo de
+`src/original-match-program.json` y las partituras
+de `src/original-music.json` conservan la autoría
 y los derechos que correspondan a sus respectivos titulares. Se incluyen con
 fines de preservación, estudio, interoperabilidad y documentación histórica,
 sin afirmar propiedad sobre la obra original.

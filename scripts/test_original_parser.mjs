@@ -36,7 +36,7 @@ for (const [text, expected] of languageCases) {
 assert.equal(expandOriginalPhrase("hola#mundo").includes("\n"), true);
 assert.equal(expandOriginalPhrase("Que lexico[s] !!").includes("["), false);
 
-assert.deepEqual(allowedEnvidoRaises(["real-envido", "real-envido"]), ["falta-envido"]);
+assert.deepEqual(allowedEnvidoRaises(["real-envido", "real-envido"]), ["real-envido", "dos-reales", "falta-envido"]);
 assert.equal(acceptedEnvidoPoints(["real-envido", "real-envido"], 1, 2), 6);
 assert.equal(rejectedEnvidoPoints(["real-envido", "real-envido", "falta-envido"], 1, 2), 6);
 assert.equal(trucoStrength({ id: "11-basto", rank: 11, suit: "basto" }) > trucoStrength({ id: "4-basto", rank: 4, suit: "basto" }), true);

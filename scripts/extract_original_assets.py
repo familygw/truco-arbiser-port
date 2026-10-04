@@ -8,12 +8,14 @@ bit-packed PC-speaker samples in the T*.VOZ files.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import shutil
 import struct
 import zlib
 from pathlib import Path
+from reverse_engineer_exe import MzHeader, unpack_exepack, quickbasic_strings
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -90,17 +92,98 @@ def copy_voices() -> None:
         shutil.copyfile(path, voice_dir / path.name.lower())
 
 
+
+# Names describe the port's cues; offsets refer to original static descriptors.
+MUSIC_DESCRIPTORS = {
+    "intro": 0x2440,
+    "envido": 0x209C,
+    "deal": 0x2030,
+    "real": 0x20CE,
+    "flor": 0x20EA,
+    "truco": 0x20FE,
+    "retruco": 0x2112,
+    "vale4": 0x2126,
+    "win": 0x21A2,
+    "lose": 0x21CE,
+    "mazo": 0x21F0,
+    "quiero": 0x2218,
+    "noQuiero": 0x223E,
+    "fanfare": 0x2270,
+    "handWin": 0x2286,
+    "handLose": 0x229C,
+    "taunt": 0x22B2,
+    "idle": 0x22D8,
+    "march": 0x22FA,
+    "short": 0x234E,
+    "arpeggio": 0x2C3E,
+    "rise": 0x2C50,
+    "fall": 0x2C6C,
+    "scale": 0x2C8A,
+    "trill": 0x2C9E,
+    "bells": 0x2F7A,
+    "cascade": 0x2F9C,
+    "afano": 0x306E,
+    "llora": 0x30E0,
+    "envidoReply": 0x36CA,
+    "realReply": 0x36E0,
+    "florReply": 0x3704,
+    "sting": 0x3730,
+    "long": 0x3752,
+    "cde": 0x378E,
+    "finale": 0x37E6,
+    "theme": 0x46CC,
+    "good": 0x2F5A,
+    "chord": 0x2DCE,
+    "cadence": 0x2260,
+    "openingTag": 0x2374,
+    "victoryPattern": 0x2D90,
+    "responseRun": 0x2F32,
+    "responseAccent": 0x2F48,
+    "doubleSting": 0x3742,
+    "melancholy": 0x37C4,
+}
+
+def extract_music() -> int:
+    packed = (ROOT / "TRUCO.EXE").read_bytes()
+    image, metadata, _ = unpack_exepack(packed, MzHeader.parse(packed))
+    segment, records, lookup = quickbasic_strings(image, metadata)
+    by_offset = {r["descriptorOffset"]: r for r in records}
+    tracks = {}
+    for name, descriptor in MUSIC_DESCRIPTORS.items():
+        record = by_offset[descriptor]
+        score = lookup[descriptor]
+        if not re.fullmatch(r"[a-golmnpst0-9#.+<> -]+", score):
+            raise ValueError(f"Partitura inesperada: {name}")
+        tracks[name] = {"score": score, "descriptorOffset": descriptor,
+                        "dataOffset": record["dataOffset"], "length": record["length"],
+                        "references": record["movAxPushReferences"]}
+    result = {"source": "TRUCO.EXE", "sourceSha256": hashlib.sha256(packed).hexdigest(),
+              "imageSha256": hashlib.sha256(image).hexdigest(), "dataSegment": segment,
+              "reset": lookup[0x4A92], "tracks": tracks}
+    target = Path(__file__).resolve().parents[1] / "src" / "original-music.json"
+    target.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    print(f"Música: {len(tracks)} partituras PLAY extraídas de TRUCO.EXE.")
+    return len(tracks)
+
+
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     extract_cards()
     extract_screen()
     extract_dialogues()
     copy_voices()
+    music_count = extract_music()
     metadata = {
         "source": "Truco Arbiser para DOS (1982-1986)",
         "dialogueRecords": 156,
         "voiceSamples": 156,
+        "musicScores": music_count,
+        "musicSource": "src/original-music.json (extraído de TRUCO.EXE)",
         "voiceFormat": "Flujo de audio de 1 bit, empaquetado MSB-first; se decodifica en WebAudio.",
+        "assetHashes": {
+            str(path.relative_to(OUT)): hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in sorted(OUT.rglob("*")) if path.is_file() and path.name != "metadata.json"
+        },
         "insultStems": ["put", "mierd", "pij", "conch", "bolud", "pelotu", "caraj", "chot", "fuck", "garch"],
     }
     (OUT / "metadata.json").write_text(json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

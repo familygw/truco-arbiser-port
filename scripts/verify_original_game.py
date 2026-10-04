@@ -70,7 +70,7 @@ state['stop_set']={0x11de8,0x11db2,0x11d29}
 for points in range(34):
  for player,cpu in product(range(30),repeat=2):
   for code in range(1,5):
-   word(0x1d74,points);word(0x1d48,cpu);word(0x1d4a,player);word(0x1c98,code)
+   word(0x1d74,points);word(0x1d48,player);word(0x1d4a,cpu);word(0x1c98,code)
    # Bypass run's single-RET assertion: these three addresses are verified branch boundaries.
    for reg,val in [(UC_X86_REG_CS,0x1000),(UC_X86_REG_DS,0x1de2),(UC_X86_REG_SS,0x4000),(UC_X86_REG_SP,0x1000),(UC_X86_REG_EFLAGS,2)]:u.reg_write(reg,val)
    state['stop']=None;u.emu_start(0x11ce4,0,count=300)

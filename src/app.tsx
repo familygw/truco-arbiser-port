@@ -1,7 +1,12 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { OriginalRandom, clockSeededRandom } from "./original-random";
+import { OriginalTruco } from "./original-truco";
+import { originalCpuFlorOpening, originalCpuFlorResponse, originalFlorReply, originalFlorAudit, originalFlorDeclaration, type FlorResult } from "./original-flor";
+import { originalCpuEnvidoOpening, originalCpuEnvidoCounterResponse, originalEnvidoDeclaration, originalEnvidoAudit, originalEnvidoCode, originalEnvidoForcedAcceptance, originalEnvidoRaisedWager, originalEnvidoClosure } from "./original-envido-lifecycle";
+import { originalCpuEnvidoResponse } from "./original-envido";
+import { FormEvent, Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import { playMusic, playVoice, stopMusic } from "./audio";
 import { acceptedEnvidoPoints, allowedEnvidoRaises, describeEnvido, envidoLabel, rejectedEnvidoPoints, type EnvidoCall } from "./bids";
-import { Card, envidoPoints, florPoints, hasFlor, orderedCpuCards, pickCpuCard, shuffledDeck, splitScore, suitLabel, trucoStrength } from "./game";
+import { Card, envidoPoints, florPoints, hasFlor, dealHand, splitScore, suitLabel, trucoStrength } from "./game";
 import {
   classifyOriginalLanguage,
   expandOriginalPhrase,
@@ -23,10 +28,11 @@ type Phase = "playing" | "hand-over" | "match-over";
 type Dialogue = { record: number; voice: string; text: string };
 type TablePlay = { leader: Side; player?: Card; cpu?: Card };
 type PendingCall =
-  | { kind: "envido"; sequence: EnvidoCall[]; deferredTruco?: 2 | 3 | 4 }
+  | { kind: "envido"; sequence: EnvidoCall[]; deferredTruco?: 2 | 3 | 4; playerTrucoAfter?: boolean }
   | { kind: "truco"; nextStake: 2 | 3 | 4 }
-  | { kind: "flor"; mode: "flor" | "contraflor" | "resto"; deferredTruco?: 2 | 3 | 4 };
+  | { kind: "flor"; mode: "flor" | "resto"; opening?: 3 | 4 | 30; deferredTruco?: 2 | 3 | 4 };
 type PendingEnvidoDeclaration = {
+  flor?: { points: number; mode: 0 | 40 | 50 | 60 };
   sequence: EnvidoCall[];
   cpuClaim: number;
   cpuActual: number;
@@ -38,8 +44,14 @@ type TantoAudit = {
   points: number;
   declaredWinner: Side;
   finalWinner: Side;
+  finalPoints?: number;
   verdict: string;
+  playerClaim?: number;
+  cpuClaim?: number;
+  florMode?: 0 | 40 | 50 | 60;
 };
+
+const DosReplayPanel=lazy(()=>import("./dos-replay-panel"));
 
 const assetUrl = (path: string) => `${import.meta.env.BASE_URL}${path}`;
 
@@ -51,58 +63,15 @@ const CPU_TAUNTS = [
   "Te estoy calando y yo no pierdo mi memoria…",
 ];
 
-function freshHand() {
-  const deck = shuffledDeck();
-  return { player: deck.slice(0, 3), cpu: deck.slice(3, 6) };
-}
 
 function pendingCallLabel(call: PendingCall): string {
   if (call.kind === "envido") return describeEnvido(call.sequence);
-  if (call.kind === "flor") return call.mode === "flor" ? "FLOR" : call.mode === "contraflor" ? "CONTRAFLOR" : "CONTRAFLOR AL RESTO";
+  if (call.kind === "flor") return call.mode === "flor" ? "FLOR" : "CONTRAFLOR AL RESTO";
   return call.nextStake === 2 ? "TRUCO" : call.nextStake === 3 ? "RETRUCO" : "VALE 4";
-}
-
-function decideHand(results: number[], mano: Side): number | null {
-  const [a, b, c] = results;
-  if (results.length >= 2) {
-    if (a === b && a !== 0) return a;
-    if (a === 0 && b !== 0) return b;
-    if (a !== 0 && b === 0) return a;
-  }
-  if (results.length === 3) return c || a || (mano === "player" ? 1 : -1);
-  return null;
-}
-
-function cpuBluffChance(points: number): number {
-  if (points >= 30) return 0.78;
-  if (points >= 26) return 0.58;
-  if (points >= 22) return 0.38;
-  return 0.16;
 }
 
 function otherSide(side: Side): Side {
   return side === "player" ? "cpu" : "player";
-}
-
-function winnerByPoints(playerPoints: number, cpuPoints: number, mano: Side): Side {
-  if (playerPoints === cpuPoints) return mano;
-  return playerPoints > cpuPoints ? "player" : "cpu";
-}
-
-function cpuEnvidoClaim(actual: number): number {
-  if (actual >= 33) return actual;
-  // Los versos 46, 102, 105 y 117 del original hablan explícitamente de
-  // tirarse el lance y mentir. La frecuencia exacta todavía no está aislada.
-  const lieChance = actual >= 30 ? 0.07 : actual >= 27 ? 0.13 : actual >= 20 ? 0.21 : 0.3;
-  if (Math.random() >= lieChance) return actual;
-  const believableFloor = actual < 20 ? 24 : actual + 1;
-  return Math.min(33, believableFloor + Math.floor(Math.random() * (34 - believableFloor)));
-}
-
-function cpuTrucoChance(cards: Card[], tricks: number[]): number {
-  const strength = cards.reduce((total, card) => total + trucoStrength(card), 0) / Math.max(1, cards.length);
-  const behind = tricks.filter((result) => result > 0).length > tricks.filter((result) => result < 0).length;
-  return Math.min(0.82, 0.12 + strength / 24 + (behind ? 0.1 : 0));
 }
 
 function PlayingCard({ card, onPlay, disabled = false, compact = false }: { card: Card; onPlay?: () => void; disabled?: boolean; compact?: boolean }) {
@@ -136,7 +105,11 @@ function Score({ label, value, active }: { label: string; value: number; active?
 }
 
 export default function App() {
-  const initial = useMemo(freshHand, []);
+  const [{ random, initial }] = useState(() => {
+    const random = clockSeededRandom();
+    return { random, initial: dealHand(new OriginalRandom(random.state).next) };
+  });
+  const [showDosReplay,setShowDosReplay]=useState(false);
   const [started, setStarted] = useState(false);
   const [view, setView] = useState<"game" | "archive">("game");
   const [playerCards, setPlayerCards] = useState(initial.player);
@@ -146,6 +119,11 @@ export default function App() {
   const [tricks, setTricks] = useState<number[]>([]);
   const [score, setScore] = useState({ player: 0, cpu: 0 });
   const [handPoints, setHandPoints] = useState({ player: 0, cpu: 0 });
+  const faltaCountRef = useRef(0);
+  const envidoOpeningSeenRef = useRef(false);
+  const envidoOpeningActionRef = useRef(false);
+  const envidoOriginRef = useRef<Side>("player");
+  const envidoStrategyRef = useRef<number | null>(null);
   const handPointsRef = useRef({ player: 0, cpu: 0 });
   const [stake, setStake] = useState(1);
   const [trucoCaller, setTrucoCaller] = useState<Side | null>(null);
@@ -178,7 +156,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (started) {
+    if (started || showDosReplay) {
       stopMusic();
       return;
     }
@@ -195,9 +173,11 @@ export default function App() {
       window.clearTimeout(introTimer);
       stopMusic();
     };
-  }, [started]);
+  }, [started, showDosReplay]);
 
   const matchWinner = score.player >= 30 ? "Vos" : score.cpu >= 30 ? "La CPU" : null;
+  const deferredPlayerTrucoCodeRef = useRef<number | null>(null);
+  const originalTrucoRef = useRef<{ key: string; engine: OriginalTruco; cpu: Card[]; player: Card[]; base: { player: number; cpu: number }; tantoKey: string } | null>(null);
   const fullPlayerHand = useMemo(() => [...playerCards, ...table.flatMap((play) => play.player ? [play.player] : [])], [playerCards, table]);
   const fullCpuHand = useMemo(() => [...cpuCards, ...table.flatMap((play) => play.cpu ? [play.cpu] : [])], [cpuCards, table]);
   const canFlor = florEnabled && hasFlor(fullPlayerHand) && !envidoDone && tricks.length === 0;
@@ -205,22 +185,22 @@ export default function App() {
   const trucoLabel = stake === 1 ? "Truco" : stake === 2 ? "Retruco" : stake === 3 ? "Vale 4" : "Cantado";
 
   useEffect(() => {
-    if (!started || phase !== "playing" || openingChecked) return;
+    if (!started || showDosReplay || phase !== "playing" || openingChecked) return;
     const timer = window.setTimeout(() => setOpeningChecked(true), 500);
     return () => window.clearTimeout(timer);
-  }, [started, phase, openingChecked]);
+  }, [started, showDosReplay, phase, openingChecked]);
 
   useEffect(() => {
-    if (!started || !openingChecked || phase !== "playing" || turn !== "cpu" || pendingCall || pendingEnvidoDeclaration || cpuCards.length === 0) return;
+    if (!started || showDosReplay || !openingChecked || phase !== "playing" || turn !== "cpu" || pendingCall || pendingEnvidoDeclaration || cpuCards.length === 0) return;
     const timer = window.setTimeout(() => cpuTakeTurn(), 620);
     return () => window.clearTimeout(timer);
-  }, [started, openingChecked, phase, turn, pendingCall, pendingEnvidoDeclaration, cpuDecisionMade, cpuCards, playerCards, table, tricks, envidoDone, stake, trucoCaller, sound]);
+  }, [started, showDosReplay, openingChecked, phase, turn, pendingCall, pendingEnvidoDeclaration, cpuDecisionMade, cpuCards, playerCards, table, tricks, envidoDone, stake, trucoCaller, sound]);
 
   useEffect(() => {
-    if (!started || !openingChecked || phase !== "playing" || turn !== "player" || pendingCall || pendingEnvidoDeclaration || tricks.length !== 2 || playerCards.length !== 1) return;
+    if (!started || showDosReplay || !openingChecked || phase !== "playing" || turn !== "player" || pendingCall || pendingEnvidoDeclaration || tricks.length !== 2 || playerCards.length !== 1) return;
     const timer = window.setTimeout(() => playCard(playerCards[0]), 360);
     return () => window.clearTimeout(timer);
-  }, [started, openingChecked, phase, turn, pendingCall, pendingEnvidoDeclaration, tricks.length, playerCards]);
+  }, [started, showDosReplay, openingChecked, phase, turn, pendingCall, pendingEnvidoDeclaration, tricks.length, playerCards]);
 
   function say(text: string, voiceIndex?: number) {
     setSpeech(text);
@@ -247,7 +227,7 @@ export default function App() {
   function finishHand(side: Side, points: number, message: string) {
     const audit = tantoAuditRef.current;
     const settledHandPoints = { ...handPointsRef.current };
-    if (audit) settledHandPoints[audit.finalWinner] += audit.points;
+    if (audit) settledHandPoints[audit.finalWinner] += audit.finalPoints ?? audit.points;
     handPointsRef.current = settledHandPoints;
     setHandPoints(settledHandPoints);
     const gainedPlayer = settledHandPoints.player + (side === "player" ? points : 0);
@@ -282,16 +262,59 @@ export default function App() {
     const result = Math.sign(trucoStrength(playerCard) - trucoStrength(cpuCard));
     const nextTricks = [...tricks, result];
     setTricks(nextTricks);
-    const handResult = decideHand(nextTricks, mano);
-    if (handResult) {
-      finishHand(handResult > 0 ? "player" : "cpu", effectiveStake, handResult > 0 ? "Ganaste la mano. No te engrupas…" : "¡Dormiste afuera! ¿Querés una frazada?");
-      return;
-    }
     const nextLeader: Side = result > 0 ? "player" : result < 0 ? "cpu" : leader;
     giveTurn(nextLeader);
     if (result > 0) say("Esta baza es tuya. Todavía no terminó.");
     else if (result < 0) say(CPU_TAUNTS[Math.floor(Math.random() * CPU_TAUNTS.length)]);
     else say("Parda. La ventaja sigue con quien salió.");
+  }
+
+  function originalTrucoState() {
+    const key = `${handNumber}:${mano}:${playerCardOrder.join(",")}`;
+    const audit = tantoAuditRef.current;
+    const base = { ...handPointsRef.current };
+    if (audit) base[audit.declaredWinner] += audit.points;
+    const tantoKey = JSON.stringify([base, audit?.playerClaim, audit?.cpuClaim, audit?.florMode]);
+    if (originalTrucoRef.current?.key === key) {
+      const state = originalTrucoRef.current;
+      if (state.tantoKey !== tantoKey) {
+        const m = state.engine.machine;
+        m.write(0x1d9c, m.read(0x1d9c) + base.player - state.base.player);
+        m.write(0x1d86, m.read(0x1d86) + base.cpu - state.base.cpu);
+        m.florEnabled = florEnabled; m.write(0x1de0, audit?.florMode ?? 0);
+        m.write(0x1d94, audit?.cpuClaim ?? 0); m.write(0x1d96, audit?.playerClaim ?? 39);
+        m.write(0x1da2, audit ? 1 : 0); m.write(0x1dde, audit?.kind === "flor" && hasFlor(state.cpu) ? 1 : 0);
+        state.base = base; state.tantoKey = tantoKey;
+      }
+      return state;
+    }
+    const player = playerCardOrder.map(id => fullPlayerHand.find(card => card.id === id)!);
+    const cpu = [...fullCpuHand];
+    const engine = new OriginalTruco(player, cpu, mano === "cpu", score.player, score.cpu, random.next, m => {
+      m.write(0x1d74, florEnabled && hasFlor(cpu) ? 0 : envidoPoints(cpu)); m.write(0x1d76, florEnabled ? florPoints(cpu) : 0);
+      m.write(0x1d9c, base.player); m.write(0x1d86, base.cpu);
+      m.florEnabled = florEnabled; m.write(0x1de0, audit?.florMode ?? 0);
+      m.write(0x1d94, audit?.cpuClaim ?? 0); m.write(0x1d96, audit?.playerClaim ?? 39);
+      m.write(0x1da2, audit ? 1 : 0);
+      m.write(0x1dde, audit?.kind === "flor" && hasFlor(cpu) ? 1 : 0);
+    });
+    return originalTrucoRef.current = { key, engine, player, cpu, base, tantoKey };
+  }
+
+  function applyTrucoEvent(endMessage?: string) {
+    const state = originalTrucoState();
+    const event = state.engine.event;
+    if (event.kind === "call") { setTrucoCaller("cpu"); cpuCallsTruco(event.value as 2 | 3 | 4); return; }
+    if (event.kind === "end") {
+      const { winner, points } = state.engine.award(state.base);
+      finishHand(winner, points, endMessage ?? (winner === "player" ? "Ganaste la mano." : "Te gané la mano."));
+      return;
+    }
+    if (event.kind === "invalid") {
+      state.engine.next(); say("Ese canto no corresponde ahora. Contestá la apuesta."); return;
+    }
+    if (event.kind === "tanto") throw Error("Tanto inesperado dentro de la decisión de Truco");
+    giveTurn(event.kind === "card" ? "cpu" : "player");
   }
 
   function cpuTakeTurn() {
@@ -300,40 +323,39 @@ export default function App() {
       setCpuDecisionMade(true);
       const cpuEnvido = envidoPoints(fullCpuHand);
       const cpuHasFlor = hasFlor(fullCpuHand);
-      const florLieChance = score.cpu < score.player ? 0.17 : 0.1;
-      const cpuLiesAboutFlor = florEnabled && !cpuHasFlor && Math.random() < florLieChance;
-      if (florEnabled && !envidoDone && tricks.length === 0 && (cpuHasFlor || cpuLiesAboutFlor)) {
-        setEnvidoDone(true);
-        void playMusic("flor", sound);
-        if (hasFlor(fullPlayerHand)) {
-          setPendingCall({ kind: "flor", mode: "flor" });
-          say("¡Flor! Vos también tenés: con flor quiero, contraflor o te achicás.", 49);
-        } else {
-          deferFlor("cpu", 3, false);
-          say("¡Flor! Los tres puntos quedan en suspenso hasta mostrar las cartas.", 49);
+      if (florEnabled && !envidoDone && tricks.length === 0 && cpuHasFlor) {
+        openCpuFlor();
+        return;
+      }
+      if (!envidoDone && tricks.length === 0 && !envidoOpeningSeenRef.current) {
+        envidoOpeningSeenRef.current = true;
+        if (mano === "player") envidoOpeningActionRef.current = true;
+        const opening = originalCpuEnvidoOpening({
+          points: cpuEnvido, playerScore: score.player, cpuScore: score.cpu,
+          cpuIsMano: mano === "cpu", handNumber,
+          playerAheadWithPending: score.player + handPointsRef.current.player > score.cpu + handPointsRef.current.cpu,
+        }, random.next);
+        if (opening.action) {
+          const openingCall = opening.action;
+          envidoOriginRef.current = "cpu";
+          envidoStrategyRef.current = mano === "cpu" ? null : opening.strategyRoll;
+          setPendingCall({ kind: "envido", sequence: [openingCall] });
+          const [from, to] = openingCall === "falta-envido" ? [37, 48] : openingCall === "dos-reales" ? [25, 36] : openingCall === "real-envido" ? [13, 24] : [1, 12];
+          sayOriginalRange(from, to, `¡${envidoLabel[openingCall]}!`);
+          void playMusic(openingCall === "real-envido" || openingCall === "dos-reales" ? "real" : "envido", sound);
+          return;
         }
-        return;
       }
-      if (!envidoDone && tricks.length === 0 && Math.random() < cpuBluffChance(cpuEnvido)) {
-        const risk = Math.random();
-        const openingCall: EnvidoCall = risk < 0.08 ? "falta-envido" : risk < 0.31 ? "real-envido" : "envido";
-        setPendingCall({ kind: "envido", sequence: [openingCall] });
-        const [from, to] = openingCall === "falta-envido" ? [37, 48] : openingCall === "real-envido" ? [13, 24] : [1, 12];
-        sayOriginalRange(from, to, `¡${envidoLabel[openingCall]}! Puede ser carta… o puede ser picardía.`);
-        void playMusic(openingCall === "real-envido" ? "real" : "envido", sound);
-        return;
-      }
-      if (stake < 4 && trucoCaller !== "cpu" && Math.random() < cpuTrucoChance(cpuCards, tricks)) {
-        cpuCallsTruco((stake + 1) as 2 | 3 | 4);
-        return;
-      }
+
     }
 
+    const state = originalTrucoState();
+    const event = state.engine.event;
+    if (event.kind !== "card") { applyTrucoEvent(); return; }
     const index = tricks.length;
     const current = table[index];
-    const cpuCard = current?.player
-      ? pickCpuCard(cpuCards, current.player, tricks)
-      : orderedCpuCards(cpuCards)[Math.random() < 0.24 ? cpuCards.length - 1 : 0];
+    const cpuCard = state.cpu[event.value! - 1];
+    if (!cpuCards.some(card => card.id === cpuCard.id)) throw Error("La CPU eligió una carta ya jugada");
     setCpuCards((cards) => cards.filter((item) => item.id !== cpuCard.id));
     const play: TablePlay = current
       ? { ...current, cpu: cpuCard }
@@ -345,10 +367,13 @@ export default function App() {
     });
     if (play.player) resolveCompletedTrick(play.player, cpuCard, play.leader);
     else giveTurn("player");
+    state.engine.next();
+    applyTrucoEvent();
   }
 
-  function playCard(card: Card, effectiveStake = stake, resolvedPendingCall = false) {
-    if (phase !== "playing" || turn !== "player" || pendingEnvidoDeclaration || (pendingCall && !resolvedPendingCall)) return;
+  function playCard(card: Card, effectiveStake = stake, resolvedPendingCall = false, nativeAlreadyPlayed = false) {
+    if (phase !== "playing" || (!nativeAlreadyPlayed && turn !== "player") || pendingEnvidoDeclaration || (pendingCall && !resolvedPendingCall)) return;
+    if (mano === "player" && tricks.length === 0) envidoOpeningActionRef.current = true;
     const index = tricks.length;
     const current = table[index];
     setPlayerCards((cards) => cards.filter((item) => item.id !== card.id));
@@ -362,6 +387,10 @@ export default function App() {
     });
     if (play.cpu) resolveCompletedTrick(card, play.cpu, play.leader, effectiveStake);
     else giveTurn("cpu");
+    if (nativeAlreadyPlayed) return;
+    const state = originalTrucoState();
+    state.engine.answer(9 + state.player.findIndex(item => item.id === card.id));
+    applyTrucoEvent();
   }
 
   function restoreDeferredTruco(deferredTruco?: 2 | 3 | 4) {
@@ -370,99 +399,129 @@ export default function App() {
   }
 
   function resolveAcceptedEnvido(sequence: EnvidoCall[], deferredTruco?: 2 | 3 | 4, playerTrucoAfter = false) {
-    const yours = envidoPoints(fullPlayerHand);
     const theirs = envidoPoints(fullCpuHand);
-    const claim = cpuEnvidoClaim(theirs);
+    const claim = theirs;
     setPendingCall(null);
     setEnvidoDone(true);
     setPlayerClaimDraft("");
     setPendingEnvidoDeclaration({ sequence, cpuClaim: claim, cpuActual: theirs, deferredTruco, playerTrucoAfter });
-    say(`${describeEnvido(sequence)} querido. La CPU canta ${claim}. Ahora vos cantás tus tantos.`, 13);
+    say(mano === "cpu" ? `${describeEnvido(sequence)} querido. Yo canto ${claim}. ¿Y vos?` : `${describeEnvido(sequence)} querido. Sos mano: vos cantás primero.`, 13);
   }
 
   function declarePlayerEnvido(rawClaim: number) {
     const declaration = pendingEnvidoDeclaration;
     if (!declaration) return;
-    if (!Number.isInteger(rawClaim) || rawClaim < 0 || rawClaim > 33) {
-      say("Cantá un número entero entre 0 y 33, aparcero.");
+    const maxClaim = declaration.flor ? 38 : 33;
+    const minClaim = declaration.flor && mano === "player" ? 20 : 0;
+    if (!Number.isInteger(rawClaim) || rawClaim < minClaim || rawClaim > maxClaim) {
+      say(`Cantá un número entero entre ${minClaim} y ${maxClaim}, aparcero.`);
+      return;
+    }
+    if (declaration.flor) {
+      const result = originalFlorDeclaration(declaration.cpuActual, rawClaim, mano === "cpu");
+      if (result.winner === "invalid") return;
+      const winner = result.winner;
+      const effectiveClaim = result.auditClaim;
+      deferFlor(winner, declaration.flor.points, declaration.flor.mode !== 0, declaration.flor.mode, effectiveClaim);
+      setPendingEnvidoDeclaration(null); setPlayerClaimDraft("");
+      restoreDeferredTruco(declaration.deferredTruco);
+      say(`${rawClaim || "Son buenas"}. ${declaration.flor.points} de Flor quedan en revisión hasta mostrar las cartas.`);
       return;
     }
     const playerActual = envidoPoints(fullPlayerHand);
-    const playerTruthful = rawClaim === playerActual;
-    const cpuTruthful = declaration.cpuClaim === declaration.cpuActual;
-    const declaredWinner = winnerByPoints(rawClaim, declaration.cpuClaim, mano);
-    const actualWinner = winnerByPoints(playerActual, declaration.cpuActual, mano);
-    const finalWinner = playerTruthful && !cpuTruthful
-      ? "player"
-      : cpuTruthful && !playerTruthful
-        ? "cpu"
-        : actualWinner;
+    const declared = originalEnvidoDeclaration(declaration.cpuActual, rawClaim, mano === "cpu");
     const points = acceptedEnvidoPoints(declaration.sequence, score.player, score.cpu);
-    const lies = [
-      !playerTruthful ? `vos cantaste ${rawClaim} y tenías ${playerActual}` : "",
-      !cpuTruthful ? `la CPU cantó ${declaration.cpuClaim} y tenía ${declaration.cpuActual}` : "",
-    ].filter(Boolean);
-    const verdict = lies.length
-      ? `Se mostraron las cartas: ${lies.join("; ")}. ¡Mentira descubierta! ${points} para ${finalWinner === "player" ? "vos" : "la CPU"}.`
-      : `Se mostraron las cartas: ${playerActual} contra ${declaration.cpuActual}. El Envido estaba bien cantado: ${points} para ${finalWinner === "player" ? "vos" : "la CPU"}.`;
-    deferTanto({ kind: "envido", points, declaredWinner, finalWinner, verdict });
+    const result = originalEnvidoAudit(fullPlayerHand, rawClaim, declaration.cpuActual, mano === "cpu", florEnabled, points);
+    const finalWinner: Side = result.playerPoints > 0 ? "player" : "cpu";
+    const finalPoints = result.playerPoints + result.cpuPoints;
+    const hiddenFlor = florEnabled && hasFlor(fullPlayerHand);
+    const verdict = result.penalized
+      ? hiddenFlor
+        ? `Negaste tu Flor: la CPU recibe el Envido y cuatro puntos de penalización (${finalPoints}).`
+        : `Se mostraron las cartas: cantaste ${rawClaim} y tenías ${playerActual}. La CPU se queda con los ${points} del Envido.`
+      : `Se mostraron las cartas. ${points} de Envido para ${finalWinner === "player" ? "vos" : "la CPU"}.`;
+    const audit: TantoAudit = { kind: "envido", points, declaredWinner: declared.winner, finalWinner, finalPoints, verdict, playerClaim: declared.auditClaim, cpuClaim: declaration.cpuActual };
+    // 1B06 / 1C0A checks a provisional winning score before returning to the cards.
+    const closure = originalEnvidoClosure(fullPlayerHand, rawClaim, declaration.cpuActual, mano === "cpu", florEnabled, points, score.player + handPointsRef.current.player, score.cpu + handPointsRef.current.cpu);
+    const closesProvisionally = closure.immediate;
+    if (closesProvisionally) {
+      bankPoints(finalWinner, finalPoints);
+      if (closure.matchWinner !== null) {
+        setScore({ player: score.player + handPointsRef.current.player, cpu: score.cpu + handPointsRef.current.cpu });
+        setPhase("match-over");
+        setLastWinner(finalWinner);
+      }
+    } else deferTanto(audit);
     setPendingEnvidoDeclaration(null);
     setPlayerClaimDraft("");
-    if (declaration.playerTrucoAfter) offerTrucoToCpu();
-    else restoreDeferredTruco(declaration.deferredTruco);
-    say(`${rawClaim} contra ${declaration.cpuClaim}. El tanto queda en revisión hasta el final de la mano.`);
-    void playMusic(declaredWinner === "player" ? "win" : "lose", sound);
+    const resumePlayerTruco = declaration.playerTrucoAfter && closure.matchWinner === null;
+    if (!resumePlayerTruco && closure.matchWinner === null) restoreDeferredTruco(declaration.deferredTruco);
+    say(closesProvisionally ? verdict : mano === "player" ? `${rawClaim}: ${declared.winner === "player" ? "son buenas" : `${declaration.cpuActual} son mejores`}. El tanto queda en revisión hasta el final de la mano.` : rawClaim === 0 ? "Son buenas. El tanto queda en revisión hasta el final de la mano." : `${rawClaim} contra ${declaration.cpuClaim}. El tanto queda en revisión hasta el final de la mano.`);
+    void playMusic(declared.winner === "player" ? "win" : "lose", sound);
+    if (resumePlayerTruco) offerTrucoToCpu(true);
+
   }
 
-  function cpuRespondsToEnvido(sequence: EnvidoCall[], deferredTruco?: 2 | 3 | 4) {
+  function cpuRespondsToEnvido(sequence: EnvidoCall[], deferredTruco?: 2 | 3 | 4, playerTrucoAfter = false) {
+    const incomingCall = sequence.at(-1)!;
+    if (incomingCall === "falta-envido" && (sequence.length === 1 || envidoOriginRef.current === "cpu")) faltaCountRef.current++;
     const cpuHasFlor = florEnabled && hasFlor(fullCpuHand);
     if (cpuHasFlor) {
       setEnvidoDone(true);
       void playMusic("flor", sound);
-      if (hasFlor(fullPlayerHand)) {
-        setPendingCall({ kind: "flor", mode: "flor", deferredTruco });
-        say("El Envido no corre: tengo Flor. ¿Con flor querés o te achicás?", 49);
-      } else {
-        deferFlor("cpu", 3, false);
-        restoreDeferredTruco(deferredTruco);
-        say("El Envido no corre porque tengo Flor. Tres quedan en revisión hasta mostrar.", 49);
-      }
+      openCpuFlor(deferredTruco);
       return;
     }
 
-    const cpuPoints = envidoPoints(fullCpuHand);
-    const raises = allowedEnvidoRaises(sequence);
-    const courage = cpuBluffChance(cpuPoints);
-    if (Math.random() > courage) {
+    const previous = sequence.slice(0, -1);
+    // Keep the uncapped wager: the DOS strategy inspects it before awarding points.
+    const previousWager = Math.max(1, previous.reduce(originalEnvidoRaisedWager, 0));
+    const context = {
+      points: envidoPoints(fullCpuHand),
+      incoming: originalEnvidoCode[incomingCall],
+      playerScore: score.player,
+      cpuScore: score.cpu,
+      cpuIsMano: mano === "cpu",
+      openingStarted: envidoOpeningActionRef.current,
+      playerAheadWithPending: score.player + handPointsRef.current.player > score.cpu + handPointsRef.current.cpu,
+      previousWager,
+      faltaCount: faltaCountRef.current,
+    };
+    const currentWager = sequence.reduce(originalEnvidoRaisedWager, 0);
+    const counter = envidoOriginRef.current === "cpu"
+      ? originalCpuEnvidoCounterResponse(context, envidoStrategyRef.current, currentWager, random.next)
+      : null;
+    if (counter) envidoStrategyRef.current = counter.strategyRoll;
+    let action = counter?.action ?? originalCpuEnvidoResponse(context, random.next);
+    if (action === "reject" && originalEnvidoForcedAcceptance(previousWager, currentWager, score.player, score.cpu)) action = "accept";
+    if (action === "reject") {
       const points = rejectedEnvidoPoints(sequence, score.player, score.cpu);
       setEnvidoDone(true);
       bankPoints("player", points);
       restoreDeferredTruco(deferredTruco);
       say(`No quiero ${describeEnvido(sequence)}. ${points} para vos.`);
       void playMusic("noQuiero", sound);
+      if (playerTrucoAfter) offerTrucoToCpu(true);
       return;
     }
-    if (raises.length && Math.random() < Math.min(0.66, 0.12 + courage * 0.58)) {
-      const raise = raises.includes("falta-envido") && Math.random() < (cpuPoints >= 29 ? 0.34 : 0.1)
-        ? "falta-envido"
-        : raises.includes("real-envido")
-          ? "real-envido"
-          : raises[0];
-      const raisedSequence = [...sequence, raise];
-      setPendingCall({ kind: "envido", sequence: raisedSequence, deferredTruco });
-      const isSecondReal = raisedSequence.filter((call) => call === "real-envido").length === 2;
-      const [from, to] = raise === "falta-envido" ? [37, 48] : isSecondReal ? [25, 36] : [13, 24];
+    if (action !== "accept") {
+      const raisedSequence = [...sequence, action];
+      setPendingCall({ kind: "envido", sequence: raisedSequence, deferredTruco, playerTrucoAfter });
+      const [from, to] = action === "falta-envido" ? [37, 48] : action === "dos-reales" ? [25, 36] : action === "envido" ? [1, 12] : [13, 24];
       sayOriginalRange(from, to, `La CPU responde ${describeEnvido(raisedSequence)}. Ahora decidís vos.`);
-      void playMusic(raise === "real-envido" ? "real" : "envidoReply", sound);
+      void playMusic(action === "real-envido" || action === "dos-reales" ? "real" : "envidoReply", sound);
       return;
     }
-    resolveAcceptedEnvido(sequence, deferredTruco);
+    resolveAcceptedEnvido(sequence, deferredTruco, playerTrucoAfter);
   }
 
   function callEnvido(call: EnvidoCall = "envido", deferredTruco?: 2 | 3 | 4) {
     if ((turn !== "player" && deferredTruco === undefined) || envidoDone || tricks.length > 0 || phase !== "playing") return;
     if (pendingCall && pendingCall.kind !== "truco") return;
     const sequence = [call];
+    envidoOriginRef.current = "player";
+    envidoStrategyRef.current = null;
+    deferredPlayerTrucoCodeRef.current = null;
     setPendingCall(null);
     void playMusic(call === "real-envido" ? "real" : "envido", sound);
     say(`Cantaste ${envidoLabel[call]}. La CPU decide…`);
@@ -471,93 +530,67 @@ export default function App() {
 
   function raisePendingEnvido(call: EnvidoCall) {
     if (!pendingCall || pendingCall.kind !== "envido") return;
+    if (!allowedEnvidoRaises(pendingCall.sequence, envidoOriginRef.current).includes(call)) return;
     const sequence = [...pendingCall.sequence, call];
     const deferredTruco = pendingCall.deferredTruco;
+    const playerTrucoAfter = pendingCall.playerTrucoAfter;
     setPendingCall(null);
     say(`Subís a ${describeEnvido(sequence)}. La CPU decide…`);
     void playMusic(call === "real-envido" ? "real" : call === "falta-envido" ? "envidoReply" : "envido", sound);
-    cpuRespondsToEnvido(sequence, deferredTruco);
+    cpuRespondsToEnvido(sequence, deferredTruco, playerTrucoAfter);
   }
 
-  function deferFlor(declaredWinner: Side, points: number, bothClaimed: boolean) {
-    const playerActual = florPoints(fullPlayerHand);
-    const cpuActual = florPoints(fullCpuHand);
-    const playerHasIt = playerActual > 0;
-    const cpuHasIt = cpuActual > 0;
-    const finalWinner = bothClaimed
-      ? playerHasIt || cpuHasIt
-        ? winnerByPoints(playerActual, cpuActual, mano)
-        : mano
-      : declaredWinner === "player"
-        ? playerHasIt ? "player" : "cpu"
-        : cpuHasIt ? "cpu" : "player";
-    const liar = bothClaimed
-      ? [!playerHasIt ? "vos cantaste Flor sin tenerla" : "", !cpuHasIt ? "la CPU cantó Flor sin tenerla" : ""].filter(Boolean).join("; ")
-      : declaredWinner === "player" && !playerHasIt
-        ? "cantaste Flor sin tenerla"
-        : declaredWinner === "cpu" && !cpuHasIt
-          ? "la CPU cantó Flor sin tenerla"
-          : "";
-    const verdict = liar
-      ? `Se mostraron las cartas: ${liar}. ¡Flor de plástico! ${points} para ${finalWinner === "player" ? "vos" : "la CPU"}.`
-      : `Se mostraron las cartas: la Flor era buena. ${points} para ${finalWinner === "player" ? "vos" : "la CPU"}.`;
-    deferTanto({ kind: "flor", points, declaredWinner, finalWinner, verdict });
+  function deferFlor(declaredWinner: Side, points: number, playerClaimed: boolean, mode: 0 | 40 | 50 | 60 = playerClaimed ? 50 : 0, claim = 50) {
+    const result = originalFlorAudit(florPoints(fullPlayerHand), claim, declaredWinner, points, mode, hasFlor(fullCpuHand), envidoPoints(fullPlayerHand));
+    const verdict = result.penalized
+      ? `Se mostraron las cartas: el canto de Flor no era válido. ${result.points} para la CPU.`
+      : `Se mostraron las cartas: ${points} de Flor para ${result.winner === "player" ? "vos" : "la CPU"}.`;
+    const audit: TantoAudit = { kind: "flor", points, declaredWinner, finalWinner: result.winner, finalPoints: result.points, verdict, playerClaim: claim, cpuClaim: florPoints(fullCpuHand), florMode: mode };
+    if (score[declaredWinner] + handPointsRef.current[declaredWinner] + points >= 30) {
+      bankPoints(result.winner, result.points);
+      if (score[result.winner] + handPointsRef.current[result.winner] >= 30) {
+        setScore({ player: score.player + handPointsRef.current.player, cpu: score.cpu + handPointsRef.current.cpu });
+        setPhase("match-over"); setLastWinner(result.winner);
+      }
+    } else deferTanto(audit);
   }
 
-  function resolveFlor(mode: "flor" | "contraflor" | "resto", deferredTruco?: 2 | 3 | 4) {
-    const yours = florPoints(fullPlayerHand);
-    const theirs = florPoints(fullCpuHand);
-    const declaredWinner = winnerByPoints(yours, theirs, mano);
-    const points = mode === "flor" ? 4 : mode === "contraflor" ? 6 : acceptedEnvidoPoints(["falta-envido"], score.player, score.cpu);
-    restoreDeferredTruco(deferredTruco);
-    setEnvidoDone(true);
-    deferFlor(declaredWinner, points, true);
-    say("Se cruzaron las flores. Los puntos quedan en revisión hasta mostrar.", declaredWinner === "player" ? 61 : 121);
-    void playMusic(declaredWinner === "player" ? "florReply" : "lose", sound);
-  }
-
-  function raisePendingFlor(mode: "contraflor" | "resto") {
-    if (!pendingCall || pendingCall.kind !== "flor") return;
-    const cpuFlor = florPoints(fullCpuHand);
-    const deferredTruco = pendingCall.deferredTruco;
-    setPendingCall(null);
-    void playMusic("florReply", sound);
-    if (Math.random() > Math.min(0.82, 0.18 + cpuFlor / 48)) {
-      deferFlor("player", 4, false);
-      restoreDeferredTruco(deferredTruco);
-      say("Con Flor me achico. Cuatro quedan en revisión hasta mostrar.", 73);
-      return;
-    }
-    if (mode === "contraflor" && Math.random() < Math.min(0.62, 0.08 + cpuFlor / 70)) {
-      setPendingCall({ kind: "flor", mode: "resto", deferredTruco });
-      say("¡Contraflor al resto! Te toca responder.", 121);
-      return;
-    }
-    resolveFlor(mode, deferredTruco);
-  }
-
-  function callFlor(deferredTruco?: 2 | 3 | 4, fromPendingCall = false) {
-    if (turn !== "player" || !canCallFlor || phase !== "playing" || (!fromPendingCall && pendingCall) || pendingEnvidoDeclaration) return;
-    setPendingCall(null);
+  function openCpuFlor(deferredTruco?: 2 | 3 | 4) {
+    const opening = originalCpuFlorOpening(florPoints(fullCpuHand), random.next);
     setEnvidoDone(true);
     void playMusic("flor", sound);
-    if (!hasFlor(fullCpuHand)) {
-      deferFlor("player", 3, false);
-      restoreDeferredTruco(deferredTruco);
-      say("Flor. Tres puntos quedan en suspenso hasta mostrar.", 49);
-      return;
-    }
-    const cpuFlor = florPoints(fullCpuHand);
-    if (cpuFlor < 27 && Math.random() > 0.35) {
-      deferFlor("player", 3, false);
-      restoreDeferredTruco(deferredTruco);
-      say("Con Flor me achico. Tres quedan en revisión hasta mostrar.", 73);
-    } else if (cpuFlor >= 32 && Math.random() < 0.5) {
-      setPendingCall({ kind: "flor", mode: "resto", deferredTruco });
-      say("¡Contraflor al resto! Te toca responder.", 121);
+    setPendingCall({ kind: "flor", mode: opening === 30 ? "resto" : "flor", opening, deferredTruco });
+    say(opening === 4 ? "Si hay Flor, me achico." : opening === 30 ? "¡Flor al resto!" : "¡Flor!", 49);
+  }
+
+  function applyFlorResult(result: FlorResult, deferredTruco?: 2 | 3 | 4) {
+    if (result.action === "invalid") { say("Ese canto no corresponde a esta Flor. Contestá la propuesta."); return; }
+    setEnvidoDone(true);
+    setPendingCall(null);
+    if (result.action === "accept") {
+      const actual = florPoints(fullCpuHand);
+      setPlayerClaimDraft("");
+      setPendingEnvidoDeclaration({ sequence: [], cpuClaim: actual, cpuActual: actual, deferredTruco, flor: { points: result.points, mode: result.mode } });
+      say(mano === "cpu" ? `Flor querida. Yo canto ${actual}. ¿Y vos?` : "Flor querida. Sos mano: cantá tus tantos.", 61);
     } else {
-      resolveFlor("flor", deferredTruco);
+      deferFlor(result.action, result.points, result.mode !== 0, result.mode);
+      restoreDeferredTruco(deferredTruco);
+      say(`${result.action === "player" ? "Con Flor me achico" : "La Flor queda para mí"}. ${result.points} puntos quedan en revisión.`, result.action === "player" ? 73 : 49);
     }
+  }
+
+  function replyFlor(incoming: number) {
+    if (pendingCall?.kind !== "flor") return;
+    const opening = pendingCall.opening ?? (pendingCall.mode === "resto" ? 30 : 3);
+    applyFlorResult(originalFlorReply(opening, incoming, florPoints(fullCpuHand), score.player, score.cpu), pendingCall.deferredTruco);
+  }
+
+  function raisePendingFlor() { replyFlor(7); }
+
+  function callFlor(deferredTruco?: 2 | 3 | 4, fromPendingCall = false, incoming: 5 | 6 | 7 | 8 = 5) {
+    if (turn !== "player" || !canCallFlor || phase !== "playing" || (!fromPendingCall && pendingCall) || pendingEnvidoDeclaration) return;
+    void playMusic("flor", sound);
+    applyFlorResult(originalCpuFlorResponse(florPoints(fullCpuHand), incoming, score.player, score.cpu, random.next), deferredTruco);
   }
 
   function interruptPendingWithFlor() {
@@ -566,35 +599,48 @@ export default function App() {
     callFlor(deferredTruco, true);
   }
 
-  function offerTrucoToCpu(): number | null {
+  function offerTrucoToCpu(skipEnvido = false, originalCode?: number): number | null {
     if (stake >= 4 || trucoCaller === "player") return null;
     void playMusic(stake === 1 ? "truco" : stake === 2 ? "retruco" : "vale4", sound);
-    const courage = cpuTrucoChance(cpuCards, tricks);
-    if (Math.random() > courage) {
-      finishHand("player", stake, "No quiero. Soldado que huye sirve pa' otra guerra.");
-      return null;
+    const code = originalCode ?? deferredPlayerTrucoCodeRef.current ?? (stake === 1 ? 15 : stake === 2 ? 19 : 23);
+    if (skipEnvido) deferredPlayerTrucoCodeRef.current = null;
+    if (!skipEnvido && mano === "player" && !envidoDone && tricks.length === 0 && !envidoOpeningSeenRef.current && !(florEnabled && hasFlor(fullCpuHand))) {
+      envidoOpeningSeenRef.current = true;
+      envidoOpeningActionRef.current = true;
+      const opening = originalCpuEnvidoOpening({ points: envidoPoints(fullCpuHand), playerScore: score.player, cpuScore: score.cpu, cpuIsMano: false, playerAheadWithPending: score.player + handPointsRef.current.player > score.cpu + handPointsRef.current.cpu, handNumber }, random.next);
+      if (opening.action) {
+        envidoOriginRef.current = "cpu";
+        envidoStrategyRef.current = opening.strategyRoll;
+        deferredPlayerTrucoCodeRef.current = code;
+        setPendingCall({ kind: "envido", sequence: [opening.action], playerTrucoAfter: true });
+        say(`Antes está el ${envidoLabel[opening.action]}, mi amigo.`);
+        void playMusic("envido", sound);
+        return null;
+      }
     }
+    const state = originalTrucoState();
     const next = stake + 1 as 2 | 3 | 4;
-    setStake(next);
-    setTrucoCaller("player");
-    if (next < 4 && Math.random() < Math.min(0.38, 0.08 + courage * 0.34)) {
-      const counter = (next + 1) as 3 | 4;
-      setTrucoCaller("cpu");
-      cpuCallsTruco(counter);
-      return null;
-    }
-    say("Quiero, che. Seguimos jugando.", 86);
+    const before = state.engine.machine.read(0x18bc);
+    state.engine.answer(code);
+    if (state.engine.event.kind === "invalid") { applyTrucoEvent(); return null; }
+    const accepted = state.engine.event.kind !== "end";
+    if (accepted) { setStake(next); setTrucoCaller("player"); }
+    if (state.engine.machine.read(0x18bc) > before) playCommandCard((code - (next === 2 ? 12 : next === 3 ? 16 : 20)) as 0 | 1 | 2, next, true, true);
+    applyTrucoEvent();
+    if (!accepted || state.engine.event.kind === "call") return null;
+    say("Quiero, che. Seguimos jugando.");
     return next;
   }
 
-  function callTruco(): number | null {
+  function callTruco(originalCode?: number): number | null {
     if (turn !== "player" || stake >= 4 || trucoCaller === "player" || phase !== "playing" || pendingCall) return null;
-    return offerTrucoToCpu();
+    return offerTrucoToCpu(false, originalCode);
   }
 
   function fold() {
     if (turn !== "player" || phase !== "playing" || pendingCall) return;
-    finishHand("cpu", stake, "Abandonaste, cobarde. ¡El cuello te arde!");
+    originalTrucoState().engine.answer(26);
+    applyTrucoEvent("Abandonaste, cobarde. ¡El cuello te arde!");
   }
 
   function acceptPendingCall() {
@@ -605,13 +651,15 @@ export default function App() {
       setPendingCall(null);
       say("Quiero. Seguimos jugando.");
       void playMusic("quiero", sound);
+      originalTrucoState().engine.answer(24);
+      applyTrucoEvent();
       return;
     }
     if (pendingCall.kind === "flor") {
-      resolveFlor(pendingCall.mode, pendingCall.deferredTruco);
+      replyFlor((pendingCall.opening ?? 3) === 3 ? 6 : 24);
       return;
     }
-    resolveAcceptedEnvido(pendingCall.sequence, pendingCall.deferredTruco);
+    resolveAcceptedEnvido(pendingCall.sequence, pendingCall.deferredTruco, pendingCall.playerTrucoAfter);
   }
 
   function rejectPendingCall() {
@@ -625,13 +673,12 @@ export default function App() {
       restoreDeferredTruco(rejected.deferredTruco);
       say(`No quiero ${describeEnvido(rejected.sequence)}. ${points} para la CPU.`);
       void playMusic("noQuiero", sound);
+      if (rejected.playerTrucoAfter) offerTrucoToCpu(true);
     } else if (rejected.kind === "flor") {
-      const points = rejected.mode === "flor" ? 3 : 4;
-      deferFlor("cpu", points, false);
-      restoreDeferredTruco(rejected.deferredTruco);
-      say(`Con Flor me achico. ${points} quedan en revisión hasta mostrar.`, 73);
+      applyFlorResult(originalFlorReply(rejected.opening ?? (rejected.mode === "resto" ? 30 : 3), 8, florPoints(fullCpuHand), score.player, score.cpu), rejected.deferredTruco);
     } else {
-      finishHand("cpu", stake, "No quiero. La apuesta anterior es para la CPU.");
+      originalTrucoState().engine.answer(25);
+      applyTrucoEvent("No quiero. La apuesta anterior es para la CPU.");
     }
   }
 
@@ -648,7 +695,7 @@ export default function App() {
       setEnvidoDone(true);
       bankPoints("cpu", points);
     }
-    offerTrucoToCpu();
+    offerTrucoToCpu(true);
   }
 
   function interruptTrucoWithEnvido(call: EnvidoCall) {
@@ -656,27 +703,36 @@ export default function App() {
     callEnvido(call, pendingCall.nextStake);
   }
 
-  function raisePendingTruco(): number | null {
+  function raisePendingTruco(originalCode?: number): number | null {
     if (!pendingCall || pendingCall.kind !== "truco" || pendingCall.nextStake >= 4) return null;
     const raisedStake = (pendingCall.nextStake + 1) as 3 | 4;
     setPendingCall(null);
-    const courage = cpuTrucoChance(cpuCards, tricks);
-    void playMusic(raisedStake === 3 ? "retruco" : "vale4", sound);
-    if (Math.random() > courage) {
-      finishHand("player", pendingCall.nextStake, `No quiero tu ${raisedStake === 3 ? "retruco" : "vale cuatro"}.`);
+    const state = originalTrucoState();
+    const before = state.engine.machine.read(0x18bc);
+    const code = originalCode ?? (raisedStake === 3 ? 19 : 23);
+    state.engine.answer(code);
+    if (state.engine.event.kind === "invalid") {
+      state.engine.next();
+      setPendingCall(pendingCall);
+      say("Ahora sólo podés querer o rechazar ese Truco.");
       return null;
     }
-    setStake(raisedStake);
-    setTrucoCaller("player");
-    say(`Quiero tu ${raisedStake === 3 ? "retruco" : "vale cuatro"}.`, raisedStake === 3 ? 98 : 109);
+    const accepted = state.engine.event.kind !== "end";
+    if (accepted) { setStake(raisedStake); setTrucoCaller("player"); }
+    if (state.engine.machine.read(0x18bc) > before) playCommandCard((code - (raisedStake === 3 ? 16 : 20)) as 0 | 1 | 2, raisedStake, true, true);
+    void playMusic(raisedStake === 3 ? "retruco" : "vale4", sound);
+    applyTrucoEvent();
+    if (!accepted || state.engine.event.kind === "call") return null;
+    say(`Quiero tu ${raisedStake === 3 ? "retruco" : "vale cuatro"}.`);
     return raisedStake;
   }
 
   function nextHand() {
     if (matchWinner) {
-      const next = freshHand();
+      const next = dealHand(random.next);
       const firstMano: Side = startAsMano ? "player" : "cpu";
       setScore({ player: 0, cpu: 0 });
+      faltaCountRef.current = 0;
       handPointsRef.current = { player: 0, cpu: 0 };
       setHandPoints({ player: 0, cpu: 0 });
       setPlayerCards(next.player);
@@ -687,6 +743,11 @@ export default function App() {
       setStake(1);
       setTrucoCaller(null);
       setEnvidoDone(false);
+      envidoOpeningSeenRef.current = false;
+      envidoOpeningActionRef.current = false;
+      envidoOriginRef.current = "player";
+      envidoStrategyRef.current = null;
+      deferredPlayerTrucoCodeRef.current = null;
       setLastWinner(null);
       setPhase("playing");
       setHandNumber(1);
@@ -702,7 +763,7 @@ export default function App() {
       say("Revancha. Ahora ya sé cómo jugás.");
       return;
     }
-    const next = freshHand();
+    const next = dealHand(random.next);
     const nextMano: Side = mano === "player" ? "cpu" : "player";
     setPlayerCards(next.player);
     setPlayerCardOrder(next.player.map((card) => card.id));
@@ -712,6 +773,11 @@ export default function App() {
     setStake(1);
     setTrucoCaller(null);
     setEnvidoDone(false);
+    envidoOpeningSeenRef.current = false;
+    envidoOpeningActionRef.current = false;
+    envidoOriginRef.current = "player";
+    envidoStrategyRef.current = null;
+    deferredPlayerTrucoCodeRef.current = null;
     setLastWinner(null);
     setPhase("playing");
     setPendingCall(null);
@@ -730,13 +796,13 @@ export default function App() {
     void playMusic("deal", sound);
   }
 
-  function playCommandCard(index: 0 | 1 | 2, effectiveStake = stake, resolvedPendingCall = false): boolean {
+  function playCommandCard(index: 0 | 1 | 2, effectiveStake = stake, resolvedPendingCall = false, nativeAlreadyPlayed = false): boolean {
     const card = playerCards.find((item) => item.id === playerCardOrder[index]);
     if (!card) {
       say(`La carta ${index + 1} ya no está en tu mano.`);
       return true;
     }
-    playCard(card, effectiveStake, resolvedPendingCall);
+    playCard(card, effectiveStake, resolvedPendingCall, nativeAlreadyPlayed);
     return true;
   }
 
@@ -745,10 +811,11 @@ export default function App() {
     const { code, cardIndex, normalized: text } = command;
 
     if (pendingCall?.kind === "envido") {
-      const raises = allowedEnvidoRaises(pendingCall.sequence);
+      const raises = allowedEnvidoRaises(pendingCall.sequence, envidoOriginRef.current);
       if (florEnabled && code === 5) { interruptPendingWithFlor(); return true; }
       if (code === 4 && raises.includes("falta-envido")) { raisePendingEnvido("falta-envido"); return true; }
-      if ((code === 2 || code === 3) && raises.includes("real-envido")) { raisePendingEnvido("real-envido"); return true; }
+      if (code === 2 && raises.includes("real-envido")) { raisePendingEnvido("real-envido"); return true; }
+      if (code === 3 && raises.includes("dos-reales")) { raisePendingEnvido("dos-reales"); return true; }
       if (code === 1 && raises.includes("envido")) { raisePendingEnvido("envido"); return true; }
       if (text.includes("no quiero") && text.includes("truco")) { answerEnvidoAndTruco(false); return true; }
       if (text.includes("quiero") && text.includes("truco")) { answerEnvidoAndTruco(true); return true; }
@@ -762,7 +829,8 @@ export default function App() {
     if (pendingCall?.kind === "truco") {
       if (florEnabled && !envidoDone && tricks.length === 0 && code === 5) { interruptPendingWithFlor(); return true; }
       if (!envidoDone && tricks.length === 0 && code === 4) { interruptTrucoWithEnvido("falta-envido"); return true; }
-      if (!envidoDone && tricks.length === 0 && (code === 2 || code === 3)) { interruptTrucoWithEnvido("real-envido"); return true; }
+      if (!envidoDone && tricks.length === 0 && code === 2) { interruptTrucoWithEnvido("real-envido"); return true; }
+      if (!envidoDone && tricks.length === 0 && code === 3) { interruptTrucoWithEnvido("dos-reales"); return true; }
       if (!envidoDone && tricks.length === 0 && code === 1) { interruptTrucoWithEnvido("envido"); return true; }
 
       const retrucoCodes = [16, 17, 18, 19];
@@ -771,8 +839,7 @@ export default function App() {
         ? retrucoCodes.includes(code)
         : pendingCall.nextStake === 3 && valeFourCodes.includes(code);
       if (requestsCorrectRaise) {
-        const acceptedStake = raisePendingTruco();
-        if (acceptedStake && cardIndex !== undefined) playCommandCard(cardIndex, acceptedStake, true);
+        raisePendingTruco(code);
         return true;
       }
       if (code === 24 || code === 0) { acceptPendingCall(); return true; }
@@ -782,30 +849,26 @@ export default function App() {
     }
 
     if (pendingCall?.kind === "flor") {
-      if (code === 8 || code === 25) { rejectPendingCall(); return true; }
-      if (text.includes("contraflor al resto")) { raisePendingFlor("resto"); return true; }
-      if (code === 7) { raisePendingFlor("contraflor"); return true; }
-      if (code === 6 || code === 24 || code === 0) { acceptPendingCall(); return true; }
-      if (code > 0) { say("Con Flor: quiero, me achico, contraflor o contraflor al resto."); return true; }
+      if ([0, 5, 6, 7, 8, 24, 25, 26].includes(code)) { replyFlor(code); return true; }
+      if (code > 0) { say("Con Flor: quiero, Flor, con Flor quiero, contraflor o me achico."); return true; }
       return false;
     }
 
     if (code === 4) { callEnvido("falta-envido"); return true; }
     if (code === 2) { callEnvido("real-envido"); return true; }
-    if (code === 3) { say("Dos Reales Envido necesita un Real Envido anterior."); return true; }
+    if (code === 3) { callEnvido("dos-reales"); return true; }
     if (code === 1) { callEnvido("envido"); return true; }
-    if (code === 5) {
+    if (code >= 5 && code <= 8) {
       if (!florEnabled) say("Esta partida se juega sin Flor, che.");
-      else callFlor();
+      else callFlor(undefined, false, code as 5 | 6 | 7 | 8);
       return true;
     }
     if (code >= 9 && code <= 11 && cardIndex !== undefined) return playCommandCard(cardIndex);
     if (code >= 12 && code <= 14 && cardIndex !== undefined) {
-      const acceptedStake = callTruco();
-      if (acceptedStake) playCommandCard(cardIndex, acceptedStake);
+      callTruco(code);
       return true;
     }
-    if (code === 15) { callTruco(); return true; }
+    if (code === 15 || stake === 2 && code >= 16 && code <= 19 || stake === 3 && code >= 20 && code <= 23) { callTruco(code); return true; }
     if (code === 26) { fold(); return true; }
     if (code > 0) { say("Ese canto no corresponde en este momento de la mano."); return true; }
     return false;
@@ -816,8 +879,9 @@ export default function App() {
     const value = command.trim();
     if (!value) return;
     if (pendingEnvidoDeclaration) {
+      if (mano === "cpu" && /^(son buenas|buenas)$/i.test(value)) { declarePlayerEnvido(0); setCommand(""); return; }
       if (/^\d{1,2}$/.test(value)) declarePlayerEnvido(Number(value));
-      else say("La CPU espera tus tantos: escribí un número entre 0 y 33.");
+      else say(pendingEnvidoDeclaration.flor ? "La CPU espera tu Flor: escribí tus tantos hasta 38." : "La CPU espera tus tantos: escribí un número entre 0 y 33.");
       setCommand("");
       return;
     }
@@ -849,7 +913,7 @@ export default function App() {
 
   function startGame() {
     stopMusic();
-    const next = freshHand();
+    const next = dealHand(random.next);
     const firstMano: Side = startAsMano ? "player" : "cpu";
     setPlayerCards(next.player);
     setPlayerCardOrder(next.player.map((card) => card.id));
@@ -857,11 +921,17 @@ export default function App() {
     setTable([]);
     setTricks([]);
     setScore({ player: 0, cpu: 0 });
+    faltaCountRef.current = 0;
     handPointsRef.current = { player: 0, cpu: 0 };
     setHandPoints({ player: 0, cpu: 0 });
     setStake(1);
     setTrucoCaller(null);
     setEnvidoDone(false);
+    envidoOpeningSeenRef.current = false;
+    envidoOpeningActionRef.current = false;
+    envidoOriginRef.current = "player";
+    envidoStrategyRef.current = null;
+    deferredPlayerTrucoCodeRef.current = null;
     setPhase("playing");
     setSpeech(firstMano === "player" ? "Sos mano. Elegí una carta o cantá." : "La CPU es mano. Mirá bien cómo arranca.");
     setLastWinner(null);
@@ -883,6 +953,8 @@ export default function App() {
     setIntroBlocked(!played);
   }
 
+  if(showDosReplay)return <Suspense fallback={<main className="intro-shell">Cargando reproducción DOS…</main>}><DosReplayPanel onClose={()=>setShowDosReplay(false)} /></Suspense>;
+
   // show landing, first splash
   if (!started) {
     return (
@@ -896,7 +968,7 @@ export default function App() {
           </div>
           <div className="intro-options" aria-label="Opciones de la partida">
             <button className="intro-option" type="button" aria-pressed={florEnabled} onClick={() => setFlorEnabled((value) => !value)}>
-              <span><strong>Jugar con Flor</strong><em>{florEnabled ? "Flor, contraflor y al resto" : "Sólo envido"}</em></span>
+              <span><strong>Jugar con Flor</strong><em>{florEnabled ? "Flor, con Flor quiero y al resto" : "Sólo envido"}</em></span>
               <i aria-hidden="true"><b /></i>
             </button>
             <button className="intro-option" type="button" aria-pressed={startAsMano} onClick={() => setStartAsMano((value) => !value)}>
@@ -906,6 +978,7 @@ export default function App() {
           </div>
           {introBlocked ? <button className="sound-unlock" onClick={() => void activateSplashAudio()}>▶ ACTIVAR SONIDO DEL SPLASH</button> : null}
           <button className="primary-button" onClick={startGame}>JUGAR PARTIDA <span>↗</span></button>
+          <button type="button" className="dos-entry" onClick={()=>{stopMusic();setShowDosReplay(true);}}>REPRODUCIR DOS POR SEMILLA</button>
           <small className="intro-credit">Juego original por Ariel y Enrique Arbiser · Port web por Carlos A. Leguizamón</small>
         </div>
       </main>
@@ -915,9 +988,10 @@ export default function App() {
   return (
     <main className="app-shell">
       <header className="topbar glass">
-        <div className="brand"><span className="brand-mark">TA</span><div><strong>TRUCO ARBISER</strong><small>WEB PORT // BUILD 0.2</small></div></div>
+        <div className="brand"><span className="brand-mark">TA</span><div><strong>TRUCO ARBISER</strong><small>WEB PORT // v{__APP_VERSION__} · BUILD {import.meta.env.VITE_BUILD_ID || __BUILD_ID__}</small></div></div>
         <nav aria-label="Vistas">
           <button className={view === "game" ? "selected" : ""} onClick={() => setView("game")}>Partida</button>
+          <button onClick={()=>{stopMusic();setShowDosReplay(true);}}>DOS por semilla</button>
           <button className={view === "archive" ? "selected" : ""} onClick={() => setView("archive")}>Archivo recuperado</button>
         </nav>
         <div className="toggles">
@@ -931,7 +1005,7 @@ export default function App() {
           <div className="table glass">
             <div className="scanlines" />
             <section className="cpu-zone">
-              <div className="player-label"><span className="status-dot" /> CPU_ARBITER <em>{cpuCards.length} cartas · {phase !== "playing" && tantoAudit ? "MOSTRÓ" : mano === "cpu" ? "MANO" : turn === "cpu" ? "TURNO" : "ESPERA"}</em></div>
+              <div className="player-label"><span className="status-dot" /> CPU_ARBITER <em>{cpuCards.length} cartas · {phase !== "playing" ? tantoAudit ? "MOSTRÓ" : "MANO CERRADA" : mano === "cpu" ? "MANO" : turn === "cpu" ? "TURNO" : "ESPERA"}</em></div>
               <div className="cpu-hand">{cpuCards.map((card) => phase !== "playing" && tantoAudit ? <PlayingCard key={card.id} card={card} compact /> : <CardBack key={card.id} />)}</div>
             </section>
 
@@ -975,25 +1049,26 @@ export default function App() {
               <div className={`panel-heading ${pendingCall || pendingEnvidoDeclaration ? "cpu-call-heading" : ""}`}><span>{pendingEnvidoDeclaration ? "VOS CANTÁS" : pendingCall ? "LA CPU CANTÓ" : "TU JUGADA"}</span><em>ESTACA ×{stake}</em></div>
               {phase === "playing" && pendingEnvidoDeclaration ? <>
                 <div className="call-notice">
-                  <small>LA CPU DECLARÓ</small>
-                  <strong>{pendingEnvidoDeclaration.cpuClaim} DE ENVIDO</strong>
+                  <small>{mano === "cpu" ? "LA CPU DECLARÓ" : "SOS MANO"}</small>
+                  <strong>{mano === "cpu" ? `${pendingEnvidoDeclaration.cpuClaim} DE ${pendingEnvidoDeclaration.flor ? "FLOR" : "ENVIDO"}` : "VOS CANTÁS PRIMERO"}</strong>
                 </div>
-                <button className="action-primary" onClick={() => declarePlayerEnvido(envidoPoints(fullPlayerHand))}>Cantar {envidoPoints(fullPlayerHand)}<small>Decir la verdad</small></button>
+                <button className="action-primary" onClick={() => declarePlayerEnvido(pendingEnvidoDeclaration.flor ? florPoints(fullPlayerHand) : envidoPoints(fullPlayerHand))}>Cantar {pendingEnvidoDeclaration.flor ? florPoints(fullPlayerHand) : envidoPoints(fullPlayerHand)}<small>Decir la verdad</small></button>
                 <div className="claim-entry">
-                  <input type="number" min="0" max="33" inputMode="numeric" value={playerClaimDraft} onChange={(event) => setPlayerClaimDraft(event.target.value)} placeholder="0–33" aria-label="Tantos que querés declarar" />
+                  <input type="number" min="0" max={pendingEnvidoDeclaration.flor ? 38 : 33} inputMode="numeric" value={playerClaimDraft} onChange={(event) => setPlayerClaimDraft(event.target.value)} placeholder={pendingEnvidoDeclaration.flor ? "20–38" : "0–33"} aria-label="Tantos que querés declarar" />
                   <button onClick={() => declarePlayerEnvido(Number(playerClaimDraft))} disabled={playerClaimDraft === ""}>Declarar<small>Jugar con picardía</small></button>
                 </div>
+                {mano === "cpu" ? <button onClick={() => declarePlayerEnvido(0)}>Son buenas<small>Ceder el tanto</small></button> : null}
                 <p className="bluff-hint">Podés cantar otros tantos. Las cartas se muestran al cerrar la mano.</p>
               </> : phase === "playing" && pendingCall ? <>
                 <div className="call-notice">
                   <small>TE TOCA RESPONDER</small>
                   <strong>{pendingCallLabel(pendingCall)}</strong>
                 </div>
-                <button className="action-primary" onClick={acceptPendingCall}>{pendingCall.kind === "flor" ? "Con flor quiero" : "Quiero"}<small>Aceptar la propuesta</small></button>
+                <button className="action-primary" onClick={acceptPendingCall}>{pendingCall.kind === "flor" && pendingCall.opening === 3 ? "Con Flor quiero" : "Quiero"}<small>Aceptar la propuesta</small></button>
                 <div className="bid-options">
                   <button onClick={rejectPendingCall}>{pendingCall.kind === "flor" ? "Con flor me achico" : "No quiero"}<small>Rechazar</small></button>
                   {pendingCall.kind === "envido" ? <>
-                    {allowedEnvidoRaises(pendingCall.sequence).map((call) => <button key={call} onClick={() => raisePendingEnvido(call)}>{call === "envido" && pendingCall.sequence.includes("envido") ? "Envido envido" : call === "real-envido" && pendingCall.sequence.includes("real-envido") ? "Dos Reales Envido" : envidoLabel[call]}<small>Subir el tanto</small></button>)}
+                    {allowedEnvidoRaises(pendingCall.sequence, envidoOriginRef.current).map((call) => <button key={call} onClick={() => raisePendingEnvido(call)}>{call === "envido" && pendingCall.sequence.includes("envido") ? "Envido envido" : envidoLabel[call]}<small>Subir el tanto</small></button>)}
                     {florEnabled ? <button onClick={interruptPendingWithFlor}>Flor<small>Anula el Envido</small></button> : null}
                     {stake < 4 && trucoCaller !== "player" ? <>
                       <button onClick={() => answerEnvidoAndTruco(true)}>Quiero y {trucoLabel}<small>Resolver y cantar</small></button>
@@ -1001,7 +1076,7 @@ export default function App() {
                     </> : null}
                   </> : null}
                   {pendingCall.kind === "truco" ? <>
-                    {pendingCall.nextStake < 4 ? <button onClick={raisePendingTruco}>Quiero y {pendingCall.nextStake === 2 ? "retruco" : "vale 4"}<small>Aceptar y subir</small></button> : null}
+                    {pendingCall.nextStake < 4 ? <button onClick={() => raisePendingTruco()}>Quiero y {pendingCall.nextStake === 2 ? "retruco" : "vale 4"}<small>Aceptar y subir</small></button> : null}
                     {!envidoDone && tricks.length === 0 ? <>
                       <button onClick={() => interruptTrucoWithEnvido("envido")}>Envido<small>Se resuelve primero</small></button>
                       <button onClick={() => interruptTrucoWithEnvido("real-envido")}>Real Envido<small>Se resuelve primero</small></button>
@@ -1010,16 +1085,16 @@ export default function App() {
                     </> : null}
                   </> : null}
                   {pendingCall.kind === "flor" ? <>
-                    {pendingCall.mode === "flor" ? <button onClick={() => raisePendingFlor("contraflor")}>Contraflor<small>Subir a seis</small></button> : null}
-                    {pendingCall.mode !== "resto" ? <button onClick={() => raisePendingFlor("resto")}>Contraflor al resto<small>Jugar el partido</small></button> : null}
+                    {pendingCall.mode !== "resto" ? <button onClick={() => replyFlor(5)}>Flor<small>Responder con Flor</small></button> : null}
+                    {pendingCall.mode !== "resto" ? <button onClick={() => raisePendingFlor()}>Contraflor al resto<small>Jugar el partido</small></button> : null}
                   </> : null}
                 </div>
               </> : phase === "playing" ? <>
-                <button className="action-primary" onClick={callTruco} disabled={!openingChecked || turn !== "player" || stake >= 4 || trucoCaller === "player"}>{trucoLabel}<small>{!openingChecked ? "La CPU revisa sus cartas" : turn !== "player" ? "Está jugando la CPU" : trucoCaller === "player" ? "Esperá que suba la CPU" : "Subir la apuesta"}</small></button>
+                <button className="action-primary" onClick={() => callTruco()} disabled={!openingChecked || turn !== "player" || stake >= 4 || trucoCaller === "player"}>{trucoLabel}<small>{!openingChecked ? "La CPU revisa sus cartas" : turn !== "player" ? "Está jugando la CPU" : trucoCaller === "player" ? "Esperá que suba la CPU" : "Subir la apuesta"}</small></button>
                 <div className="bid-options normal-bids">
                   <button onClick={() => callEnvido("envido")} disabled={!openingChecked || turn !== "player" || envidoDone || tricks.length > 0 || canFlor}>Envido<small>Dos puntos</small></button>
                   <button onClick={() => callEnvido("real-envido")} disabled={!openingChecked || turn !== "player" || envidoDone || tricks.length > 0 || canFlor}>Real Envido<small>Tres puntos</small></button>
-                  <button onClick={() => callEnvido("falta-envido")} disabled={!openingChecked || turn !== "player" || envidoDone || tricks.length > 0 || canFlor}>Falta Envido<small>Hasta las buenas</small></button>
+                  <button onClick={() => callEnvido("falta-envido")} disabled={!openingChecked || turn !== "player" || envidoDone || tricks.length > 0 || canFlor}>Falta Envido<small>Hasta 30 puntos</small></button>
                   <button onClick={() => callFlor()} disabled={!openingChecked || turn !== "player" || !canCallFlor}>Flor<small>{!florEnabled ? "Desactivada" : canFlor ? "La tenés" : "Podés mentir"}</small></button>
                 </div>
                 <button className="fold-button" onClick={fold} disabled={turn !== "player"}>Irse al mazo</button>
@@ -1034,7 +1109,7 @@ export default function App() {
 
           <form className="command-line glass" onSubmit={submitCommand}>
             <span>&gt;_</span>
-            <input value={command} onChange={(event) => setCommand(event.target.value)} placeholder={pendingEnvidoDeclaration ? "Cantá tus tantos (0–33)…" : "Decile algo a la CPU… pero cuidá el léxico"} aria-label="Hablarle a la CPU" />
+            <input value={command} onChange={(event) => setCommand(event.target.value)} placeholder={pendingEnvidoDeclaration ? pendingEnvidoDeclaration.flor ? "Cantá tu Flor (20–38)…" : "Cantá tus tantos (0–33)…" : "Decile algo a la CPU… pero cuidá el léxico"} aria-label="Hablarle a la CPU" />
             <button type="submit">ENVIAR</button>
           </form>
         </section>

@@ -1,25 +1,22 @@
+import { originalEnvidoCode, originalEnvidoRaiseAllowed, originalEnvidoRaisedWager } from "./original-envido-lifecycle.ts";
 import { originalWagerCap } from "./original-game-logic.ts";
 
-export type EnvidoCall = "envido" | "real-envido" | "falta-envido";
+export type EnvidoCall = "envido" | "real-envido" | "dos-reales" | "falta-envido";
 
 export const envidoLabel: Record<EnvidoCall, string> = {
   envido: "Envido",
   "real-envido": "Real Envido",
+  "dos-reales": "Dos Reales Envido",
   "falta-envido": "Falta Envido",
 };
 
-export function allowedEnvidoRaises(sequence: EnvidoCall[]): EnvidoCall[] {
+export function allowedEnvidoRaises(sequence: EnvidoCall[], origin: "player" | "cpu" = "player"): EnvidoCall[] {
   if (sequence.includes("falta-envido")) return [];
-  const envidos = sequence.filter((call) => call === "envido").length;
-  const reales = sequence.filter((call) => call === "real-envido").length;
   const last = sequence.at(-1);
-  const raises: EnvidoCall[] = [];
-  // El Envido sólo puede repetirse inmediatamente; nunca puede bajar un
-  // Real Envido ya cantado (el original responde "mal cantado, che").
-  if (last === "envido" && envidos < 2) raises.push("envido");
-  if (reales < 2) raises.push("real-envido");
-  raises.push("falta-envido");
-  return raises;
+  if (!last) return [];
+  const wager = sequence.reduce(originalEnvidoRaisedWager, 0);
+  const calls = Object.keys(originalEnvidoCode) as EnvidoCall[];
+  return calls.filter(call => originalEnvidoRaiseAllowed(wager, last, call, origin));
 }
 
 export function faltaEnvidoPoints(playerScore: number, cpuScore: number): number {
@@ -28,7 +25,7 @@ export function faltaEnvidoPoints(playerScore: number, cpuScore: number): number
 
 export function acceptedEnvidoPoints(sequence: EnvidoCall[], playerScore: number, cpuScore: number): number {
   if (sequence.includes("falta-envido")) return faltaEnvidoPoints(playerScore, cpuScore);
-  const stake = sequence.reduce((total, call) => total + (call === "envido" ? 2 : 3), 0);
+  const stake = sequence.reduce(originalEnvidoRaisedWager, 0);
   return originalWagerCap(stake, playerScore, cpuScore);
 }
 

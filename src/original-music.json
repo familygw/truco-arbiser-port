@@ -1,0 +1,424 @@
+{
+  "source": "TRUCO.EXE",
+  "sourceSha256": "ca9388e4443cce0c7eb3df98088d99c6d2782d2d79e0ff039c58f2e57448dcfa",
+  "imageSha256": "cb93670c8fec27e0991759e8abc334b115dac91aca19503b2540317bbfd46f57",
+  "dataSegment": 3554,
+  "reset": "mno3l10",
+  "tracks": {
+    "intro": {
+      "score": "msl10o3e..f25el5e-eebg#ep10l10e..f25el5e-ee>c<aep10l10efel5e-eebg#ep10l10fedc40d40c20<bp10l20ag#l5a>el44ababababababababababa10",
+      "descriptorOffset": 9280,
+      "dataOffset": 9284,
+      "length": 127,
+      "references": [
+        3713
+      ]
+    },
+    "envido": {
+      "score": "<l20gab>c<b>cdedefg5o1g20l10ggo3e20ae20aeffp10",
+      "descriptorOffset": 8348,
+      "dataOffset": 8352,
+      "length": 46,
+      "references": [
+        1928
+      ]
+    },
+    "deal": {
+      "score": "<e.l20efl10feeaa>ccfl5fep10l10e.l20eal10aeeccddcl5c<bp10l10eeffeeg#g#bb>fl5fep10l10eebbg#g#eedc<bb5a5p10",
+      "descriptorOffset": 8240,
+      "dataOffset": 8244,
+      "length": 104,
+      "references": [
+        1878
+      ]
+    },
+    "real": {
+      "score": "c#20d20e20f20bf20bfaap10",
+      "descriptorOffset": 8398,
+      "dataOffset": 8402,
+      "length": 24,
+      "references": [
+        1966
+      ]
+    },
+    "flor": {
+      "score": "geceba5.geceag5.",
+      "descriptorOffset": 8426,
+      "dataOffset": 8430,
+      "length": 16,
+      "references": [
+        2022
+      ]
+    },
+    "truco": {
+      "score": "ggafge5defgedg5.",
+      "descriptorOffset": 8446,
+      "dataOffset": 8450,
+      "length": 16,
+      "references": [
+        2039
+      ]
+    },
+    "retruco": {
+      "score": "ggafge5defgedc5.",
+      "descriptorOffset": 8466,
+      "dataOffset": 8470,
+      "length": 16,
+      "references": [
+        2059
+      ]
+    },
+    "vale4": {
+      "score": "eeddc.c20<bba.a20gf3.>d.d20cc<bbaag.g20fe3.b>d<b>c<ab>c<bg.a20b20a3.>cc<abgabafgag3.",
+      "descriptorOffset": 8486,
+      "dataOffset": 8490,
+      "length": 84,
+      "references": [
+        2097
+      ]
+    },
+    "win": {
+      "score": "l20<g>c10cd10degec10<g>c10cd10de6c8",
+      "descriptorOffset": 8610,
+      "dataOffset": 8614,
+      "length": 35,
+      "references": [
+        2699
+      ]
+    },
+    "lose": {
+      "score": "l20<g>c10cd10degec6>g7<d8fe7c7",
+      "descriptorOffset": 8654,
+      "dataOffset": 8658,
+      "length": 30,
+      "references": [
+        2757
+      ]
+    },
+    "mazo": {
+      "score": "<g20>c<g20>c<g20>c5<l20g>cdc<b10>cd5",
+      "descriptorOffset": 8688,
+      "dataOffset": 8692,
+      "length": 36,
+      "references": [
+        2801
+      ]
+    },
+    "quiero": {
+      "score": "l20<gb10gb10gb5gb>c<bl10ab20>c",
+      "descriptorOffset": 8728,
+      "dataOffset": 8732,
+      "length": 30,
+      "references": [
+        2859
+      ]
+    },
+    "noQuiero": {
+      "score": "l20c<ba>c<bag#10bag#bag#l10a>",
+      "descriptorOffset": 8766,
+      "dataOffset": 8770,
+      "length": 29,
+      "references": [
+        2934
+      ]
+    },
+    "fanfare": {
+      "score": "l20cdefgagfl10edc5",
+      "descriptorOffset": 8816,
+      "dataOffset": 8820,
+      "length": 18,
+      "references": [
+        3049
+      ]
+    },
+    "handWin": {
+      "score": "ggl20efedcdcdl10ec",
+      "descriptorOffset": 8838,
+      "dataOffset": 8842,
+      "length": 18,
+      "references": [
+        3093
+      ]
+    },
+    "handLose": {
+      "score": "ggl20efedcdc<b>c5",
+      "descriptorOffset": 8860,
+      "dataOffset": 8864,
+      "length": 17,
+      "references": [
+        3151
+      ]
+    },
+    "taunt": {
+      "score": "<eaa-.l20ab>c5<a5msl10baa-bl10a5.>",
+      "descriptorOffset": 8882,
+      "dataOffset": 8886,
+      "length": 34,
+      "references": [
+        3195
+      ]
+    },
+    "idle": {
+      "score": "msefdecd<b>c<al10mnbaa-bl10a.>",
+      "descriptorOffset": 8920,
+      "dataOffset": 8924,
+      "length": 30,
+      "references": [
+        3253
+      ]
+    },
+    "march": {
+      "score": "o3l20dd-de<a-52>f24ed<ba52>c24<b>cd<a52>e24dc<a<a-52>b24aa-a<e52>b24aa-bl10ap10",
+      "descriptorOffset": 8954,
+      "dataOffset": 8958,
+      "length": 79,
+      "references": [
+        3297
+      ]
+    },
+    "short": {
+      "score": "o3l10cdmseedc<bp10b>cddc<bap10",
+      "descriptorOffset": 9038,
+      "dataOffset": 9042,
+      "length": 30,
+      "references": [
+        3341
+      ]
+    },
+    "arpeggio": {
+      "score": "l15<ceg>ceg>c4",
+      "descriptorOffset": 11326,
+      "dataOffset": 11330,
+      "length": 14,
+      "references": [
+        30266
+      ]
+    },
+    "rise": {
+      "score": "<l20gab>cdefg10ab>cdefg6",
+      "descriptorOffset": 11344,
+      "dataOffset": 11348,
+      "length": 24,
+      "references": [
+        30298
+      ]
+    },
+    "fall": {
+      "score": "l20edcdc<b>c10",
+      "descriptorOffset": 11372,
+      "dataOffset": 11376,
+      "length": 14,
+      "references": [
+        30330
+      ]
+    },
+    "scale": {
+      "score": "l50cegab>ceg>cg",
+      "descriptorOffset": 11402,
+      "dataOffset": 11406,
+      "length": 15,
+      "references": [
+        30394
+      ]
+    },
+    "trill": {
+      "score": "l20cdefl25gagagagagagag10",
+      "descriptorOffset": 11422,
+      "dataOffset": 11426,
+      "length": 25,
+      "references": [
+        30426
+      ]
+    },
+    "bells": {
+      "score": "l10cceecc<gg>cel20dc<b>dc5c10",
+      "descriptorOffset": 12154,
+      "dataOffset": 12158,
+      "length": 29,
+      "references": [
+        33336
+      ]
+    },
+    "cascade": {
+      "score": "l20>c<bagfedl10cg>c",
+      "descriptorOffset": 12188,
+      "dataOffset": 12192,
+      "length": 19,
+      "references": [
+        33370
+      ]
+    },
+    "afano": {
+      "score": "<<gab>c5p5p10cdef5p5p10fed<g5g5p10>fedc5p5p5p10",
+      "descriptorOffset": 12398,
+      "dataOffset": 12402,
+      "length": 47,
+      "references": [
+        34143
+      ]
+    },
+    "llora": {
+      "score": "aagga5e.e20aagga5e.e20aagga",
+      "descriptorOffset": 12512,
+      "dataOffset": 12516,
+      "length": 27,
+      "references": [
+        34231
+      ]
+    },
+    "envidoReply": {
+      "score": "cceegg>c5<cceegg>c",
+      "descriptorOffset": 14026,
+      "dataOffset": 14030,
+      "length": 18,
+      "references": [
+        38793
+      ]
+    },
+    "realReply": {
+      "score": "e.l20fgfefede10ce10.fgfefed>c10",
+      "descriptorOffset": 14048,
+      "dataOffset": 14052,
+      "length": 31,
+      "references": [
+        38825
+      ]
+    },
+    "florReply": {
+      "score": "l20efl10edc<b>c<baag#ab>c<ap10>ep10ap10",
+      "descriptorOffset": 14084,
+      "dataOffset": 14088,
+      "length": 39,
+      "references": [
+        38857
+      ]
+    },
+    "sting": {
+      "score": "a5b5>c<p20.l10",
+      "descriptorOffset": 14128,
+      "dataOffset": 14132,
+      "length": 14,
+      "references": [
+        38916
+      ]
+    },
+    "long": {
+      "score": "l15fedfededcedcdc<b>dc<b>cde7p8fedfededcedcdc<b>dc<ba7>a",
+      "descriptorOffset": 14162,
+      "dataOffset": 14166,
+      "length": 56,
+      "references": [
+        39001
+      ]
+    },
+    "cde": {
+      "score": "l15cde.e20e20e.cde.e20e20e.cde.e20e20e.e-20e20l5ag",
+      "descriptorOffset": 14222,
+      "dataOffset": 14226,
+      "length": 50,
+      "references": [
+        39033
+      ]
+    },
+    "finale": {
+      "score": "l5<g.g10>c2.<g.>c10e2.c.e10g2.e.c10e2.",
+      "descriptorOffset": 14310,
+      "dataOffset": 14314,
+      "length": 38,
+      "references": [
+        39167
+      ]
+    },
+    "theme": {
+      "score": "o4l10<cc.de.c.f3.c.<b.b.a.b.>c3.",
+      "descriptorOffset": 18124,
+      "dataOffset": 18128,
+      "length": 32,
+      "references": [
+        51094
+      ]
+    },
+    "good": {
+      "score": "l10o3ab>c5<b5a5ab>ce<b>c<a5",
+      "descriptorOffset": 12122,
+      "dataOffset": 12126,
+      "length": 27,
+      "references": [
+        33302
+      ]
+    },
+    "chord": {
+      "score": "l15cec<a>c<aeae<a3",
+      "descriptorOffset": 11726,
+      "dataOffset": 11730,
+      "length": 18,
+      "references": [
+        31186
+      ]
+    },
+    "cadence": {
+      "score": "gegedge5",
+      "descriptorOffset": 8800,
+      "dataOffset": 8804,
+      "length": 8,
+      "references": [
+        2991
+      ]
+    },
+    "openingTag": {
+      "score": "mse5a5mn",
+      "descriptorOffset": 9076,
+      "dataOffset": 9080,
+      "length": 8,
+      "references": [
+        3399
+      ]
+    },
+    "victoryPattern": {
+      "score": ">c4<c4<c3",
+      "descriptorOffset": 11664,
+      "dataOffset": 11668,
+      "length": 9,
+      "references": [
+        30835
+      ]
+    },
+    "responseRun": {
+      "score": "fed5c20<b20a5>e5a5",
+      "descriptorOffset": 12082,
+      "dataOffset": 12086,
+      "length": 18,
+      "references": [
+        33234
+      ]
+    },
+    "responseAccent": {
+      "score": "a.eef.e3g#.a4",
+      "descriptorOffset": 12104,
+      "dataOffset": 12108,
+      "length": 13,
+      "references": [
+        33268
+      ]
+    },
+    "doubleSting": {
+      "score": "e20g15e15g15",
+      "descriptorOffset": 14146,
+      "dataOffset": 14150,
+      "length": 12,
+      "references": [
+        38933,
+        38953
+      ]
+    },
+    "melancholy": {
+      "score": "<l5aa7a10a>c7<b10b7a10a7g#10a2",
+      "descriptorOffset": 14276,
+      "dataOffset": 14280,
+      "length": 30,
+      "references": [
+        39122
+      ]
+    }
+  }
+}

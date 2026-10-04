@@ -1,6 +1,6 @@
 {
   "name": "truco-arbiser-web",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Port web de preservación del Truco Arbiser para DOS, con recursos recuperados y lógica reimplementada.",
   "author": "Carlos A. Leguizamón",
   "contributors": [
@@ -24,10 +24,14 @@
   ],
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && node scripts/test_build.mjs",
     "preview": "vite preview",
     "extract": "python3 scripts/extract_original_assets.py",
-    "test:logic": "node --experimental-strip-types scripts/test_original_parser.mjs && node --experimental-strip-types scripts/test_original_game.mjs"
+    "test:logic": "node --experimental-strip-types scripts/test_original_parser.mjs && node --experimental-strip-types scripts/test_original_game.mjs && node --experimental-strip-types scripts/test_original_envido.mjs && node --experimental-strip-types scripts/test_envido_lifecycle.mjs && node --experimental-strip-types scripts/test_original_flor.mjs && node --experimental-strip-types scripts/test_original_truco.mjs && node --experimental-strip-types scripts/test_original_truco_rounds.mjs && node --experimental-strip-types scripts/test_original_random.mjs && node --experimental-strip-types scripts/test_original_music.mjs && node --experimental-strip-types scripts/test_audio_render.mjs && node --experimental-strip-types scripts/test_seeded_match.mjs",
+    "test:assets": "node scripts/test_assets.mjs",
+    "validate": "npm run test:logic && npm run test:assets && npm run build",
+    "test:replay": "node --experimental-strip-types scripts/test_seeded_match.mjs",
+    "replay:dos": "node --experimental-strip-types scripts/export_dos_replay.mjs"
   },
   "dependencies": {
     "@vitejs/plugin-react": "6.1.1",

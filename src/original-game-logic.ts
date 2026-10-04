@@ -55,6 +55,6 @@ export function originalInitialEnvidoWager(code: 1 | 2 | 3 | 4): number {
 export function originalCpuEnvidoGate(points: number, incomingCode: 1 | 2 | 3 | 4, playerScore: number, cpuScore: number): "strong" | "weak" | "reject" {
   if (points > 24) return "strong";
   if (incomingCode === 4) return "reject";
-  if (cpuScore + 3 < playerScore || cpuScore > 26 || playerScore > 26) return "reject";
+  if (playerScore + 3 < cpuScore || cpuScore > 26 || playerScore > 26) return "reject";
   return "weak";
 }

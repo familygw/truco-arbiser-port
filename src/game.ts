@@ -1,3 +1,4 @@
+import { originalDealIds } from "./original-deal.ts";
 import { originalCardStrength, originalCpuOrder, originalHandPoints } from "./original-game-logic.ts";
 
 export type Suit = "espada" | "basto" | "copa" | "oro";
@@ -15,13 +16,11 @@ export function makeDeck(): Card[] {
   return suits.flatMap((suit) => ranks.map((rank) => ({ id: `${rank}-${suit}`, rank, suit })));
 }
 
-export function shuffledDeck(): Card[] {
-  const deck = makeDeck();
-  for (let i = deck.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [deck[i], deck[j]] = [deck[j], deck[i]];
-  }
-  return deck;
+export function dealHand(random: () => number): { player: Card[]; cpu: Card[] } {
+  const deck = (["espada", "basto", "oro", "copa"] as Suit[])
+    .flatMap(suit => ranks.map(rank => ({ id: `${rank}-${suit}`, rank, suit })));
+  const [player, cpu] = originalDealIds(random);
+  return { player: player.map(id => deck[id]), cpu: cpu.map(id => deck[id]) };
 }
 
 export function trucoStrength(card: Card): number {
@@ -51,21 +50,13 @@ export function florPoints(cards: Card[]): number {
   return originalHandPoints(cards as [Card, Card, Card], true).flor;
 }
 
-/** Original sorting recovered; choosing to win or discard still uses the port's policy. */
+/** Original stable ordering of equal-strength CPU cards. */
 export function orderedCpuCards(cards: Card[]): Card[] {
   if (cards.length === 3) {
     const order = originalCpuOrder(cards.map(trucoStrength) as [number, number, number]);
     return order.map((slot) => cards[slot]);
   }
   return [...cards].sort((a, b) => trucoStrength(a) - trucoStrength(b));
-}
-
-export function pickCpuCard(cards: Card[], playerCard: Card, trickResults: number[]): Card {
-  const ordered = orderedCpuCards(cards);
-  const winner = ordered.find((card) => trucoStrength(card) > trucoStrength(playerCard));
-  if (trickResults[0] === -1 && winner) return winner;
-  if (winner && Math.random() > 0.28) return winner;
-  return ordered[0];
 }
 
 export function splitScore(score: number): { malas: number; buenas: number } {
