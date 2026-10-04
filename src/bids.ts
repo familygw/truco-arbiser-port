@@ -1,3 +1,5 @@
+import { originalWagerCap } from "./original-game-logic.ts";
+
 export type EnvidoCall = "envido" | "real-envido" | "falta-envido";
 
 export const envidoLabel: Record<EnvidoCall, string> = {
@@ -21,13 +23,13 @@ export function allowedEnvidoRaises(sequence: EnvidoCall[]): EnvidoCall[] {
 }
 
 export function faltaEnvidoPoints(playerScore: number, cpuScore: number): number {
-  const leader = Math.max(playerScore, cpuScore);
-  return leader < 15 ? 15 - leader : 30 - leader;
+  return originalWagerCap(30, playerScore, cpuScore);
 }
 
 export function acceptedEnvidoPoints(sequence: EnvidoCall[], playerScore: number, cpuScore: number): number {
   if (sequence.includes("falta-envido")) return faltaEnvidoPoints(playerScore, cpuScore);
-  return sequence.reduce((total, call) => total + (call === "envido" ? 2 : 3), 0);
+  const stake = sequence.reduce((total, call) => total + (call === "envido" ? 2 : 3), 0);
+  return originalWagerCap(stake, playerScore, cpuScore);
 }
 
 export function rejectedEnvidoPoints(sequence: EnvidoCall[], playerScore: number, cpuScore: number): number {

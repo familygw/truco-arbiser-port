@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { playMusic, playVoice, stopMusic } from "./audio";
 import { acceptedEnvidoPoints, allowedEnvidoRaises, describeEnvido, envidoLabel, rejectedEnvidoPoints, type EnvidoCall } from "./bids";
-import { Card, envidoPoints, florPoints, hasFlor, pickCpuCard, shuffledDeck, splitScore, suitLabel, trucoStrength } from "./game";
+import { Card, envidoPoints, florPoints, hasFlor, orderedCpuCards, pickCpuCard, shuffledDeck, splitScore, suitLabel, trucoStrength } from "./game";
 import {
   classifyOriginalLanguage,
   expandOriginalPhrase,
@@ -333,7 +333,7 @@ export default function App() {
     const current = table[index];
     const cpuCard = current?.player
       ? pickCpuCard(cpuCards, current.player, tricks)
-      : [...cpuCards].sort((a, b) => trucoStrength(a) - trucoStrength(b))[Math.random() < 0.24 ? cpuCards.length - 1 : 0];
+      : orderedCpuCards(cpuCards)[Math.random() < 0.24 ? cpuCards.length - 1 : 0];
     setCpuCards((cards) => cards.filter((item) => item.id !== cpuCard.id));
     const play: TablePlay = current
       ? { ...current, cpu: cpuCard }

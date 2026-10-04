@@ -94,8 +94,9 @@ Contraflor al Resto.
 - Envido puede encadenarse con otro Envido, Real Envido y Falta Envido.
 - Se admiten dos Reales Envido, tal como indica la cadena original.
 - Rechazar una subida entrega el valor aceptado antes de la última subida.
-- Falta Envido vale lo necesario para llegar a buenas si todos están en malas,
-  o para llegar a 30 cuando alguien ya está en buenas.
+- Falta Envido vale `30 − max(puntajes totales)`, incluso cuando ambos están
+  en malas. La rutina DOS `816F–81AA` limita también las demás apuestas a
+  los puntos restantes hasta 30.
 - Envido tiene prioridad sobre un Truco todavía no respondido. Al terminar el
   tanto se restaura la respuesta pendiente al Truco.
 - Un Envido pendiente debe resolverse antes de cantar Truco; se ofrecen las
@@ -112,15 +113,50 @@ El parser, los códigos de órdenes y las ramas de lenguaje anteriores ya están
 recuperados directamente del ejecutable, no inferidos. Las reglas enumeradas en
 la sección anterior siguen siendo la implementación actual del port.
 
-Todavía falta identificar y traducir las rutinas que consumen los códigos
-`0–26`: allí están la máquina de estados de Envido/Flor/Truco, la valoración de
-la mano y las decisiones de riesgo de la CPU. Hasta completar esa segunda etapa,
-las probabilidades estratégicas del port continúan siendo aproximadas.
+Se recuperaron y trasladaron a `src/original-game-logic.ts` los primeros bloques
+fuera del parser:
 
-El primer mapa de esa etapa ya está generado en `command-consumers.json`: se
-localizaron 265 comparaciones directas contra `DS:1C98` en las rutinas del juego.
-Ese índice permite abordar cada bloque por familia —Envido, Flor, Truco y juego
-de cartas— sin confundirlo con el parser ni con datos embebidos.
+| Bloque DOS (offset de imagen) | Lógica recuperada | Validación |
+| --- | --- | --- |
+| `94F6–9609` | Fuerza de cartas; figuras codificadas como 8/9/10 | 40 cartas contra instrucciones originales |
+| `960A–96AB` | Orden de slots débil/medio/fuerte de la CPU | 9.880 manos distintas |
+| `175C–18EE` | Envido y Flor, con Flor activada/desactivada | 9.880 manos, ambos modos |
+| `816F–81AA` | Límite de apuestas hasta 30 | 27.000 casos de marcador/apuesta |
+| `19DF–1A23` | Apuestas iniciales Envido/Real/Dos Reales/Falta = 2/3/6/30 | 4 órdenes |
+| `1CE4–1D29` | Preclasificación de respuesta de la CPU al Envido | 122.400 casos |
+
+Los resultados se obtienen ejecutando las instrucciones x86 originales con
+Unicorn, no tomando el pseudocódigo de Ghidra como referencia. En el cálculo de
+Flor se sustituye únicamente la comparación de configuración con `n` por su
+contrato ZF verificado en BRUN40; no se ejecuta el runtime completo. Las manos
+se prueban como combinaciones distintas en un orden de slots por combinación,
+no como las seis permutaciones de cada mano.
+
+Los fixtures se conservan en `scripts/fixtures/original-game-fixtures.json`,
+con el hash de la imagen original. `scripts/verify_original_game.py` los regenera
+con los archivos DOS locales y las dependencias de `requirements-re.txt`.
+`npm run test:logic` comprueba la traducción TypeScript contra esos resultados,
+sin requerir el emulador ni los archivos DOS para ejecutar las pruebas.
+
+La valoración y el orden de cartas están conectados al port. La interfaz sigue
+mostrando el mejor tanto de Envido incluso con tres cartas del mismo palo; usa
+para eso la rama original con Flor desactivada. El cálculo separado de Flor usa
+la rama con Flor activada. Se corrigió Falta Envido y el límite de las apuestas
+aceptadas; por ejemplo, marcadores 3–5 dan Falta=25, y una apuesta nominal de 6
+con marcador 28–27 queda en 2.
+
+La preclasificación de Envido se conserva como una función de investigación,
+**todavía no conectada a la política de CPU**: un tanto mayor que 24 pasa a la
+estrategia fuerte; los demás rechazan Falta, rechazan cuando el rival aventaja
+por más de 3 o alguien supera 26, y en el resto pasan a la estrategia débil.
+Estas reglas sólo describen la entrada de ese bloque: hay decisiones de farol
+anteriores y decisiones aleatorias posteriores que pueden cambiar la respuesta.
+No se presenta esa clasificación como una política completa.
+
+Falta recuperar las transiciones completas de Envido/Flor/Truco, la selección de
+cartas por baza y las decisiones aleatorias de la CPU. Las probabilidades del
+port siguen siendo aproximaciones. El índice `command-consumers.json` conserva
+265 comparaciones directas contra `DS:1C98` para continuar esa investigación.
 
 ## Ajustes aplicados al port
 

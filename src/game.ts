@@ -1,3 +1,5 @@
+import { originalCardStrength, originalCpuOrder, originalHandPoints } from "./original-game-logic.ts";
+
 export type Suit = "espada" | "basto" | "copa" | "oro";
 
 export type Card = {
@@ -23,23 +25,11 @@ export function shuffledDeck(): Card[] {
 }
 
 export function trucoStrength(card: Card): number {
-  if (card.rank === 1 && card.suit === "espada") return 14;
-  if (card.rank === 1 && card.suit === "basto") return 13;
-  if (card.rank === 7 && card.suit === "espada") return 12;
-  if (card.rank === 7 && card.suit === "oro") return 11;
-  if (card.rank === 3) return 10;
-  if (card.rank === 2) return 9;
-  if (card.rank === 1) return 8;
-  if (card.rank === 12) return 7;
-  if (card.rank === 11) return 6;
-  if (card.rank === 10) return 5;
-  if (card.rank === 7) return 4;
-  if (card.rank === 6) return 3;
-  if (card.rank === 5) return 2;
-  return 1;
+  return originalCardStrength(card);
 }
 
 export function envidoPoints(cards: Card[]): number {
+  if (cards.length === 3) return originalHandPoints(cards as [Card, Card, Card], false).envido;
   let best = 0;
   for (const suit of suits) {
     const values = cards
@@ -58,11 +48,20 @@ export function hasFlor(cards: Card[]): boolean {
 
 export function florPoints(cards: Card[]): number {
   if (!hasFlor(cards)) return 0;
-  return 20 + cards.reduce((total, card) => total + (card.rank <= 7 ? card.rank : 0), 0);
+  return originalHandPoints(cards as [Card, Card, Card], true).flor;
+}
+
+/** Original sorting recovered; choosing to win or discard still uses the port's policy. */
+export function orderedCpuCards(cards: Card[]): Card[] {
+  if (cards.length === 3) {
+    const order = originalCpuOrder(cards.map(trucoStrength) as [number, number, number]);
+    return order.map((slot) => cards[slot]);
+  }
+  return [...cards].sort((a, b) => trucoStrength(a) - trucoStrength(b));
 }
 
 export function pickCpuCard(cards: Card[], playerCard: Card, trickResults: number[]): Card {
-  const ordered = [...cards].sort((a, b) => trucoStrength(a) - trucoStrength(b));
+  const ordered = orderedCpuCards(cards);
   const winner = ordered.find((card) => trucoStrength(card) > trucoStrength(playerCard));
   if (trickResults[0] === -1 && winner) return winner;
   if (winner && Math.random() > 0.28) return winner;

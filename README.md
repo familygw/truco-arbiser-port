@@ -19,6 +19,7 @@ El proyecto se encuentra en estado **MVP jugable**. Incluye:
 - Flor, Contraflor y Contraflor al Resto;
 - Truco, Retruco y Vale Cuatro con respuestas y subidas encadenadas;
 - mano y turnos alternados, pardas y tres bazas visibles;
+- valoración y orden de cartas recuperados y verificados contra el código DOS;
 - CPU con estrategia probabilística, riesgo y posibilidad de mentir en Truco,
   Envido y Flor;
 - parser conversacional, insultos y respuestas recuperadas del ejecutable;
@@ -79,7 +80,10 @@ gh api "/repos/familygw/truco-arbiser-port/pages"
 
 ## Pruebas
 
-La equivalencia del parser y las reglas recuperadas se comprueba con:
+La equivalencia del parser y los bloques recuperados se comprueba con fixtures
+obtenidos al ejecutar rutinas DOS aisladas: 40 cartas, 9.880 manos en ambos modos
+de Flor, 27.000 límites de apuesta y 122.400 ramas iniciales de Envido.
+La estrategia completa de CPU todavía está en investigación. Ejecutá:
 
 ```bash
 npm run test:logic
